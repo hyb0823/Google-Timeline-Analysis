@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Calendar as CalendarIcon, LocateFixed, ChevronDown } from 'lucide-react';
+import { Calendar as CalendarIcon, LocateFixed, ChevronDown, Menu, X } from 'lucide-react';
 import { DisplayPoint, ParsedItem } from '../types';
 import { ACTIVITY_STYLES, formatDistance, formatDuration, safeGetStyle } from '../utils';
 import { CalendarWidget } from './CalendarWidget';
@@ -16,6 +16,7 @@ export const MapInspector = ({ data, availableDates, selectedDates, onDateToggle
   const [viewPoints, setViewPoints] = useState<DisplayPoint[]>([]);
   const [autoFit, setAutoFit] = useState(true);
   const [isLeafletLoaded, setIsLeafletLoaded] = useState(false);
+  const [isSidebarOpen, setSidebarOpen] = useState(false);
 
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
@@ -170,8 +171,24 @@ export const MapInspector = ({ data, availableDates, selectedDates, onDateToggle
   }, [selectedDates, filteredData, viewPoints, autoFit]);
 
   return (
-    <>
-      <div className="w-[360px] bg-white border-r border-slate-200 flex flex-col flex-shrink-0 z-[400] shadow-xl">
+    <div className="flex h-full w-full relative overflow-hidden">
+      {/* Responsive Sidebar */}
+      <div className={`
+          absolute inset-0 z-[2000] bg-white flex flex-col
+          md:static md:w-[360px] md:border-r md:border-slate-200 md:shadow-xl
+          transition-transform duration-300 ease-in-out
+          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+         {/* Mobile Header */}
+         <div className="md:hidden p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 flex-shrink-0">
+             <span className="font-bold text-slate-800 flex items-center gap-2">
+                <CalendarIcon className="w-4 h-4"/> Inspector Options
+             </span>
+             <button onClick={() => setSidebarOpen(false)} className="p-2 bg-white border border-slate-200 rounded-lg shadow-sm text-slate-500 active:bg-slate-100">
+                 <X className="w-5 h-5" />
+             </button>
+         </div>
+
          <div className="p-4 border-b border-slate-200 bg-slate-50">
              <div className="mb-4">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Quick Date Jump</label>
@@ -180,6 +197,8 @@ export const MapInspector = ({ data, availableDates, selectedDates, onDateToggle
                         onChange={(e) => {
                              const isShift = (e.nativeEvent as any).shiftKey;
                              onQuickJump(e.target.value, !!isShift);
+                             // Auto close on mobile after selection
+                             if (window.innerWidth < 768) setSidebarOpen(false);
                         }}
                         className="w-full appearance-none bg-white border border-slate-300 text-slate-700 py-2 px-3 pr-8 rounded leading-tight focus:outline-none focus:border-blue-500 text-sm"
                         value={selectedDates.size === 1 ? Array.from(selectedDates)[0] : 'none'}
@@ -222,7 +241,10 @@ export const MapInspector = ({ data, availableDates, selectedDates, onDateToggle
                          return (
                              <button
                                 key={p.id}
-                                onClick={() => panToPoint(p)}
+                                onClick={() => {
+                                    panToPoint(p);
+                                    setSidebarOpen(false); // Close sidebar on selection
+                                }}
                                 className={`w-full text-left px-4 py-3 hover:bg-blue-50 flex items-start gap-3 transition-colors group border-l-4 ${isPlace ? 'border-red-400 bg-red-50/30' : 'border-transparent'}`}
                              >
                                  <div className={`
@@ -252,7 +274,7 @@ export const MapInspector = ({ data, availableDates, selectedDates, onDateToggle
              )}
          </div>
 
-         <div className="p-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-500 flex justify-between font-medium">
+         <div className="p-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-500 flex justify-between font-medium flex-shrink-0">
              <span>{formatDistance(filteredData.reduce((acc, curr) => acc + (curr.distance || 0), 0))} total</span>
              <label className="flex items-center gap-2 cursor-pointer hover:text-slate-800">
                 <input type="checkbox" checked={autoFit} onChange={e => setAutoFit(e.target.checked)} /> Auto-fit
@@ -260,10 +282,20 @@ export const MapInspector = ({ data, availableDates, selectedDates, onDateToggle
          </div>
       </div>
 
-      <div className="flex-1 relative bg-slate-200">
+      {/* Map Container */}
+      <div className="flex-1 relative bg-slate-200 w-full h-full">
           <div ref={mapRef} className="absolute inset-0" />
 
-          <div className="absolute bottom-6 left-6 bg-white p-3 rounded-lg shadow-lg z-[1000] border border-slate-200 text-xs">
+          {/* Mobile Sidebar Toggle */}
+          <button 
+             onClick={() => setSidebarOpen(true)}
+             className="md:hidden absolute top-4 left-4 z-[1000] bg-white p-3 rounded-full shadow-lg border border-slate-200 text-slate-700 active:bg-slate-100"
+          >
+             <Menu className="w-6 h-6" />
+          </button>
+
+          {/* Legend - Responsive adjustment */}
+          <div className="absolute bottom-6 left-4 right-4 md:left-6 md:right-auto md:w-auto bg-white p-3 rounded-lg shadow-lg z-[1000] border border-slate-200 text-xs">
             <div className="font-bold mb-2 text-slate-700">Activity Legend</div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                 <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-red-500 border border-white shadow-sm"></span> Place Visit</div>
@@ -275,6 +307,6 @@ export const MapInspector = ({ data, availableDates, selectedDates, onDateToggle
             </div>
           </div>
       </div>
-    </>
+    </div>
   );
 };

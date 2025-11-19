@@ -119,10 +119,12 @@ const interpolateTimestamps = (path: GeoPoint[], start: Date, end: Date) => {
 };
 
 const createSlice = (original: ParsedItem, startIdx: number, endIdx: number): ParsedItem | null => {
-    if (!original.path || startIdx >= endIdx) return null;
-    const path = original.path.slice(startIdx, endIdx + 1); // Include end point for continuity
+    if (!original.path || startIdx > endIdx) return null;
+    const path = original.path.slice(startIdx, endIdx + 1);
     
-    if (path.length < 2) return null;
+    // Allow single point slices. This prevents data loss when a massive jump
+    // splits a 2-point activity into two 1-point activities.
+    if (path.length < 1) return null;
     
     const s = path[0];
     const e = path[path.length-1];
@@ -145,7 +147,7 @@ const createSlice = (original: ParsedItem, startIdx: number, endIdx: number): Pa
         endLoc: e,
         startTime: startT,
         endTime: endT,
-        duration: endT.getTime() - startT.getTime(),
+        duration: Math.max(0, endT.getTime() - startT.getTime()),
         distance: dist,
         isDetailed: true,
         subType: original.subType
@@ -193,27 +195,13 @@ const reclassifyItem = (item: ParsedItem): ParsedItem => {
     const stats = getRobustStats(item.path);
     const maxSpeed = stats.maxSpeed;
     const avgSpeed = stats.avgSpeed;
-    const km = stats.totalDist;
 
-    // Heuristics based on robust stats
+    // Only intervene for impossible walking speeds if it's still impossible after splitting.
     if (['WALKING', 'RUNNING', 'ON FOOT'].includes(type)) {
-        // Increased thresholds to prevent false positives
-        if (maxSpeed > 80 || avgSpeed > 30) type = 'DRIVING';
-        else if (maxSpeed > 35 || avgSpeed > 20) type = 'CYCLING';
-    }
-    else if (type === 'CYCLING') {
-        if (avgSpeed > 50) type = 'DRIVING';
-    }
-    else if (type === 'FLYING') {
-        // Only convert to driving if it's clearly NOT a flight (short distance, low speed)
-        // But be careful not to convert taxiing if it's part of a flight (which this fn doesn't see context for, 
-        // but splitActivity handles connection).
-        if (maxSpeed < 180 && km < 100) {
+        // Extremely conservative check. 
+        if (maxSpeed > 120 || avgSpeed > 60) {
             type = 'DRIVING';
         }
-    }
-    else if (type === 'DRIVING') {
-        if (maxSpeed > 400) type = 'FLYING'; 
     }
     
     item.subType = type;
@@ -226,8 +214,8 @@ const splitActivity = (item: ParsedItem): ParsedItem[] => {
 
     const points = item.path;
     const splits: number[] = [];
+    const isFlight = item.subType === 'FLYING';
 
-    // 1. Gap Detection Loop
     for (let i = 0; i < points.length - 1; i++) {
         const p1 = points[i];
         const p2 = points[i+1];
@@ -236,16 +224,21 @@ const splitActivity = (item: ParsedItem): ParsedItem[] => {
         const gapMs = p2.timestamp.getTime() - p1.timestamp.getTime();
         const distKm = getDistanceFromLatLonInKm(p1.lat, p1.lng, p2.lat, p2.lng);
 
-        // If gap > 20 mins
-        if (gapMs > 20 * 60 * 1000) {
-            // EXCEPTION: If the distance is huge (> 100km), it's likely a flight/train 
-            // jump where GPS was lost. Keep it connected.
-            if (distKm > 100) {
-                // Do nothing, treat as valid segment
-            } else {
-                // Otherwise, it's a stop or separate trip. Split.
-                splits.push(i);
-            }
+        // Time thresholds
+        const timeThreshold = isFlight ? 12 * 60 * 60 * 1000 : 20 * 60 * 1000;
+
+        let shouldSplit = gapMs > timeThreshold;
+
+        // CRITICAL: If distance is huge and we are not flying, this is likely a missing flight
+        // or teleportation (bad timestamps). We MUST split here to prevent this "Jump" from
+        // being calculated as "Walking at 5000km/h".
+        // If we split, the post-processor will fill the gap with an "Inferred Flight/Drive".
+        if (!isFlight && distKm > 50) {
+            shouldSplit = true;
+        }
+
+        if (shouldSplit) {
+             splits.push(i);
         }
     }
 
@@ -336,10 +329,17 @@ export const detectAndNormalize = (json: any) => {
              if (loc && time.start) {
                  const dateStr = getLocalDate(time.start);
                  uniqueDays.add(dateStr);
+                 
+                 // Construct GeoPoints for start/end to enable gap linking
+                 const placeLoc = { lat: loc.lat, lng: loc.lng, timestamp: time.start };
+                 const placeEndLoc = { lat: loc.lat, lng: loc.lng, timestamp: time.end || time.start };
+                 
                  initialNormalized.push({
                      id: `place-${index}`, type: 'PLACE', name: String(name), lat: loc.lat, lng: loc.lng,
                      startTime: time.start, endTime: time.end, duration: time.durationMs, raw: item,
-                     dateStr: dateStr
+                     dateStr: dateStr,
+                     startLoc: placeLoc,
+                     endLoc: placeEndLoc
                  });
              }
         }
@@ -417,6 +417,10 @@ export const detectAndNormalize = (json: any) => {
              uniqueDays.add(dateStr);
              interpolateTimestamps(tp.points, tp.startTime, tp.endTime || tp.startTime);
              
+             // Ensure raw paths have startLoc/endLoc for gap filling
+             const s = tp.points[0];
+             const e = tp.points[tp.points.length-1];
+             
              initialNormalized.push({
                 id: `tl-path-${i}`,
                 type: 'ACTIVITY',
@@ -426,6 +430,8 @@ export const detectAndNormalize = (json: any) => {
                 startTime: tp.startTime,
                 endTime: tp.endTime,
                 path: tp.points,
+                startLoc: s,
+                endLoc: e,
                 isDetailed: true,
                 raw: tp.raw,
                 isFallback: true,
@@ -436,11 +442,62 @@ export const detectAndNormalize = (json: any) => {
 
     initialNormalized.sort((a, b) => (a.startTime?.getTime() || 0) - (b.startTime?.getTime() || 0));
 
+    // --- Post-Processing: Fill Gaps with Flights/Driving ---
+    // This handles "Teleportation" where timestamps are wrong or GPS skipped a trip.
+    const finalItems: ParsedItem[] = [];
+    
+    for (let i = 0; i < initialNormalized.length; i++) {
+        const curr = initialNormalized[i];
+        finalItems.push(curr);
+
+        if (i < initialNormalized.length - 1) {
+            const next = initialNormalized[i+1];
+            // We can now check endLoc/startLoc safely for all item types (Place, Activity, Raw Path)
+            if (curr.endLoc && next.startLoc && curr.endTime && next.startTime) {
+                 const dist = getDistanceFromLatLonInKm(curr.endLoc.lat, curr.endLoc.lng, next.startLoc.lat, next.startLoc.lng);
+                 const timeDiff = next.startTime.getTime() - curr.endTime.getTime();
+                 const hours = timeDiff / 3600000;
+                 
+                 // Calculate speed if time is positive
+                 const speed = hours > 0 ? dist / hours : Infinity; 
+
+                 // Logic: Connect only significant large gaps (> 500km) to avoid noise.
+                 // This ensures flights are connected, but minor gaps in walking/driving are left as is.
+                 if (dist > 500) {
+                     // Determine type based on speed
+                     // If speed is within a fast driving range (e.g. < 180km/h) and time is valid, assume DRIVING.
+                     // Otherwise (teleport, plane, bullet train, or missing data), default to FLYING.
+                     let inferredType = 'FLYING';
+                     if (hours > 0 && speed < 180) {
+                         inferredType = 'DRIVING';
+                     }
+
+                     finalItems.push({
+                         id: `inferred-gap-${curr.id}-${next.id}`,
+                         type: 'ACTIVITY',
+                         subType: inferredType,
+                         startTime: curr.endTime,
+                         endTime: next.startTime,
+                         startLoc: curr.endLoc,
+                         endLoc: next.startLoc,
+                         path: [curr.endLoc, next.startLoc],
+                         distance: dist * 1000,
+                         duration: Math.max(0, timeDiff),
+                         isDetailed: false,
+                         isFallback: true,
+                         raw: {},
+                         dateStr: curr.dateStr
+                     });
+                 }
+            }
+        }
+    }
+
     const stats = { format: formatType, activityCounts: {} as Record<string, number> };
-    initialNormalized.forEach(item => {
+    finalItems.forEach(item => {
         const key = item.type === 'PLACE' ? 'PLACES' : (item.subType || 'UNKNOWN');
         stats.activityCounts[key] = (stats.activityCounts[key] || 0) + 1;
     });
 
-    return { items: initialNormalized, meta: stats, availableDates: Array.from(uniqueDays).sort() };
+    return { items: finalItems, meta: stats, availableDates: Array.from(uniqueDays).sort() };
 };
