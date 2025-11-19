@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Upload, Map as MapIcon, Activity, Calendar as CalendarIcon, AlertCircle, MapPin, 
@@ -56,6 +55,12 @@ interface DisplayPoint {
 
 interface ActivityStyles {
   [key: string]: { color: string; label: string };
+}
+
+interface ActivityStat {
+  count: number;
+  dist: number;
+  duration: number;
 }
 
 // --- 1. HELPERS & CONFIG ---
@@ -295,24 +300,36 @@ const detectAndNormalize = (json: any) => {
                 const endLoc = parseGeo(act?.end || act?.endLocation || act?.destination) || validPath[validPath.length-1];
                 
                 // --- SPEED & TYPE VERIFICATION ---
-                const km = distMeters / 1000;
+                let effectiveDist = distMeters;
+                // Fallback: Calculate distance from lat/lng if missing/zero but points exist
+                if ((!effectiveDist || effectiveDist === 0) && startLoc && endLoc) {
+                     effectiveDist = getDistanceFromLatLonInKm(startLoc.lat, startLoc.lng, endLoc.lat, endLoc.lng) * 1000;
+                }
+
+                const km = effectiveDist / 1000;
                 const hours = time.durationMs / 3600000;
                 const speedKmH = hours > 0 ? km / hours : 0;
 
                 // 1. Check walking/cycling speed
+                // Threshold: 50km/h (World Class Cyclist Sprint is ~70km/h, simple cycling < 30km/h)
                 if (['WALKING', 'RUNNING', 'CYCLING'].includes(type)) {
-                    if (speedKmH > 60) type = 'DRIVING'; // Too fast for human power
+                    // Only reclassify if we have significant duration/distance to rule out GPS jitter
+                    if (speedKmH > 50 && time.durationMs > 60000) {
+                        type = 'DRIVING'; 
+                    }
                 }
                 
                 // 2. Check Driving speed
-                if (type === 'DRIVING' && speedKmH > 400) {
-                     type = 'FLYING'; // Too fast for cars
+                // Threshold: 300km/h (Fastest trains/supercars)
+                if (type === 'DRIVING' && speedKmH > 300 && time.durationMs > 120000) {
+                     type = 'FLYING'; 
                 }
 
                 // 3. Check Flying validity
                 if (type === 'FLYING') {
-                    // If really short or really slow, it's likely taxiing or driving to airport
-                    if (km < 25 || speedKmH < 50) {
+                    // If really short (<10km) OR really slow (<30km/h), likely taxiing/driving
+                    // Using 30km/h to be conservative (taxiing is usually slow)
+                    if (km < 10 || speedKmH < 30) {
                         type = 'DRIVING';
                     } else {
                         // Ensure basic path for flights if missing
@@ -326,7 +343,7 @@ const detectAndNormalize = (json: any) => {
                     id: `act-${index}`,
                     type: 'ACTIVITY',
                     subType: type,
-                    distance: distMeters,
+                    distance: effectiveDist,
                     duration: time.durationMs,
                     startTime: time.start,
                     endTime: time.end,
@@ -384,7 +401,7 @@ const CalendarWidget = ({
 }: { 
   availableDates: string[]; 
   selectedDates: Set<string>; 
-  onToggle: (d: string) => void; 
+  onToggle: (d: string, isShift: boolean) => void; 
 }) => {
     // Default view to most recent selected date or last available date
     const initialDate = useMemo(() => {
@@ -441,7 +458,7 @@ const CalendarWidget = ({
                         <button 
                             key={i}
                             disabled={!d.hasData}
-                            onClick={() => d.hasData && onToggle(d.str)}
+                            onClick={(e) => d.hasData && onToggle(d.str, e.shiftKey)}
                             className={`h-8 rounded-full flex items-center justify-center text-xs transition-all relative
                                 ${isSelected ? 'bg-blue-600 text-white font-bold shadow-md z-10' : ''}
                                 ${!isSelected && d.hasData ? 'hover:bg-blue-50 text-slate-700 font-medium bg-slate-50' : ''}
@@ -455,10 +472,10 @@ const CalendarWidget = ({
                     )
                 })}
             </div>
-            <div className="mt-2 text-[10px] text-slate-400 text-center flex justify-between">
-               <span>{selectedDates.size} days selected</span>
+            <div className="mt-2 text-[10px] text-slate-400 text-center flex justify-between items-center">
+               <span>{selectedDates.size} days selected <span className="text-slate-300 ml-1">(Shift+Click for range)</span></span>
                {selectedDates.size > 0 && (
-                   <button onClick={() => onToggle('CLEAR')} className="text-red-500 hover:underline">Clear Selection</button>
+                   <button onClick={() => onToggle('CLEAR', false)} className="text-red-500 hover:underline">Clear</button>
                )}
             </div>
         </div>
@@ -496,7 +513,7 @@ const OverviewTab = ({ data, availableDates }: { data: ParsedItem[], availableDa
         const s = {
             totalDist: 0,
             totalTime: 0,
-            activities: {} as Record<string, { count: number, dist: number, duration: number }>
+            activities: {} as Record<string, ActivityStat>
         };
         filteredData.forEach(d => {
             s.totalDist += (d.distance || 0);
@@ -570,7 +587,7 @@ const OverviewTab = ({ data, availableDates }: { data: ParsedItem[], availableDa
                 </div>
                 <div className="p-6">
                     <div className="space-y-4">
-                        {Object.entries(stats.activities)
+                        {(Object.entries(stats.activities) as [string, ActivityStat][])
                            .sort((a, b) => b[1].dist - a[1].dist)
                            .map(([key, val]) => {
                                const style = key === 'VISITS' ? { color: '#EF4444', label: 'Visits' } : safeGetStyle(key);
@@ -606,6 +623,7 @@ const Dashboard = () => {
   
   const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
+  const [lastInteractionDate, setLastInteractionDate] = useState<string | null>(null);
   
   const [viewPoints, setViewPoints] = useState<DisplayPoint[]>([]);
   
@@ -694,6 +712,7 @@ const Dashboard = () => {
             if (res.availableDates.length > 0) {
                 const last = res.availableDates[res.availableDates.length - 1];
                 setSelectedDates(new Set([last]));
+                setLastInteractionDate(last);
             }
             setLoading(false);
         } catch (err: any) {
@@ -704,21 +723,40 @@ const Dashboard = () => {
     reader.readAsText(file);
   };
 
-  const handleDateToggle = (d: string) => {
+  const handleDateToggle = (d: string, isShift: boolean) => {
       if (d === 'CLEAR') {
           setSelectedDates(new Set());
+          setLastInteractionDate(null);
           return;
       }
-      const newSet = new Set(selectedDates);
-      if (newSet.has(d)) newSet.delete(d);
-      else newSet.add(d);
+
+      let newSet = new Set(selectedDates);
+
+      // Shift-Click Range Selection
+      if (isShift && lastInteractionDate && availableDates.includes(lastInteractionDate)) {
+          const idx1 = availableDates.indexOf(lastInteractionDate);
+          const idx2 = availableDates.indexOf(d);
+          if (idx1 !== -1 && idx2 !== -1) {
+              const start = Math.min(idx1, idx2);
+              const end = Math.max(idx1, idx2);
+              const range = availableDates.slice(start, end + 1);
+              range.forEach(date => newSet.add(date));
+          }
+      } else {
+          // Normal Toggle
+          if (newSet.has(d)) newSet.delete(d);
+          else newSet.add(d);
+      }
+
       setSelectedDates(newSet);
+      setLastInteractionDate(d);
   };
 
   const handleQuickJump = (e: React.ChangeEvent<HTMLSelectElement>) => {
       const d = e.target.value;
       if (d && d !== 'none') {
           setSelectedDates(new Set([d]));
+          setLastInteractionDate(d);
       }
   };
 
