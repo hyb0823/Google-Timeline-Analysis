@@ -64,7 +64,7 @@ const parseTime = (obj: any, fallbackStart?: any, fallbackEnd?: any) => {
 
 const normalizeActivityType = (rawType: any) => {
     const t = String(rawType || 'UNKNOWN').toUpperCase().replace('_', ' ');
-    if (['IN PASSENGER VEHICLE', 'PASSENGER VEHICLE', 'IN CAR', 'DRIVING', 'MOTORCYCLING', 'CAR', 'MOVING'].includes(t)) return 'DRIVING';
+    if (['IN PASSENGER VEHICLE', 'PASSENGER VEHICLE', 'IN CAR', 'DRIVING', 'MOTORCYCLING', 'CAR', 'MOVING', 'VEHICLE'].includes(t)) return 'DRIVING';
     if (['IN TRAIN', 'TRAIN', 'SUBWAY', 'TRAM', 'RAIL'].includes(t)) return 'TRAIN';
     if (['IN BUS', 'BUS'].includes(t)) return 'BUS';
     if (['IN FERRY', 'FERRY', 'BOAT'].includes(t)) return 'FERRY';
@@ -77,43 +77,197 @@ const normalizeActivityType = (rawType: any) => {
 const interpolateTimestamps = (path: GeoPoint[], start: Date, end: Date) => {
     if (!path || path.length < 1) return;
     
-    // Ensure first and last have timestamps
+    // 1. Ensure boundaries have timestamps
     if (!path[0].timestamp) path[0].timestamp = start;
     if (!path[path.length - 1].timestamp) path[path.length - 1].timestamp = end;
 
-    const startTime = path[0].timestamp!.getTime();
-    const endTime = path[path.length - 1].timestamp!.getTime();
-    const duration = endTime - startTime;
-
-    if (duration <= 0) return;
-
-    // Calculate cumulative distance for distribution to be more accurate
-    let totalDist = 0;
-    const dists = [0]; 
-    for (let i = 0; i < path.length - 1; i++) {
-        const d = getDistanceFromLatLonInKm(path[i].lat, path[i].lng, path[i+1].lat, path[i+1].lng);
-        totalDist += d;
-        dists.push(totalDist);
+    // 2. Find all anchors (indices that already have timestamps)
+    const anchors: number[] = [];
+    for (let i = 0; i < path.length; i++) {
+        if (path[i].timestamp) anchors.push(i);
     }
 
-    if (totalDist === 0) {
-        // Fallback to linear index-based interpolation if no distance
-        const step = duration / (path.length - 1);
-        for (let i = 1; i < path.length - 1; i++) {
-            if (!path[i].timestamp) {
-                path[i].timestamp = new Date(startTime + (i * step));
+    // 3. Interpolate between anchors
+    for (let k = 0; k < anchors.length - 1; k++) {
+        const idx1 = anchors[k];
+        const idx2 = anchors[k+1];
+        
+        // Skip if adjacent
+        if (idx2 === idx1 + 1) continue;
+
+        const t1 = path[idx1].timestamp!.getTime();
+        const t2 = path[idx2].timestamp!.getTime();
+        const timeDiff = t2 - t1;
+        
+        if (timeDiff <= 0) continue;
+
+        // Calculate cumulative distance for this segment
+        let segmentDist = 0;
+        const dists: number[] = [0];
+        for (let i = idx1; i < idx2; i++) {
+            const d = getDistanceFromLatLonInKm(path[i].lat, path[i].lng, path[i+1].lat, path[i+1].lng);
+            segmentDist += d;
+            dists.push(segmentDist);
+        }
+
+        // Interpolate based on distance fraction
+        for (let i = idx1 + 1; i < idx2; i++) {
+            const fraction = segmentDist > 0 ? dists[i - idx1] / segmentDist : (i - idx1) / (idx2 - idx1);
+            path[i].timestamp = new Date(t1 + (fraction * timeDiff));
+        }
+    }
+};
+
+const createSlice = (original: ParsedItem, startIdx: number, endIdx: number): ParsedItem | null => {
+    if (!original.path || startIdx >= endIdx) return null;
+    const path = original.path.slice(startIdx, endIdx + 1); // Include end point for continuity
+    
+    if (path.length < 2) return null;
+    
+    const s = path[0];
+    const e = path[path.length-1];
+    if (!s.timestamp || !e.timestamp) return null;
+
+    const startT = s.timestamp;
+    const endT = e.timestamp;
+    
+    let dist = 0;
+    for(let i=0; i<path.length-1; i++) {
+        dist += getDistanceFromLatLonInKm(path[i].lat, path[i].lng, path[i+1].lat, path[i+1].lng);
+    }
+    dist = dist * 1000; // meters
+
+    return {
+        ...original,
+        id: `${original.id}-seg-${startIdx}`,
+        path: path,
+        startLoc: s,
+        endLoc: e,
+        startTime: startT,
+        endTime: endT,
+        duration: endT.getTime() - startT.getTime(),
+        distance: dist,
+        isDetailed: true,
+        subType: original.subType
+    };
+};
+
+const getRobustStats = (path: GeoPoint[]) => {
+    let totalDist = 0;
+    const speeds: number[] = [];
+    
+    for (let i = 0; i < path.length - 1; i++) {
+        const p1 = path[i];
+        const p2 = path[i+1];
+        const d = getDistanceFromLatLonInKm(p1.lat, p1.lng, p2.lat, p2.lng);
+        totalDist += d;
+        
+        if (p1.timestamp && p2.timestamp) {
+             const t = (p2.timestamp.getTime() - p1.timestamp.getTime()) / 3600000; // hours
+             // Filter noise: extremely short time or distance might produce erratic speeds
+             if (t > 0.0002 && d > 0.002) { 
+                 speeds.push(d/t);
+             }
+        }
+    }
+    
+    let maxSpeed = 0;
+    if (speeds.length > 0) {
+        speeds.sort((a,b) => a - b);
+        // Use 95th percentile to ignore GPS jumps/outliers
+        const idx = Math.floor(speeds.length * 0.95);
+        maxSpeed = speeds[idx];
+    }
+    
+    const totalTimeH = path.length > 1 && path[0].timestamp && path[path.length-1].timestamp 
+        ? (path[path.length-1].timestamp!.getTime() - path[0].timestamp!.getTime()) / 3600000
+        : 0;
+
+    return { maxSpeed, totalDist, avgSpeed: totalTimeH > 0 ? totalDist / totalTimeH : 0 };
+};
+
+const reclassifyItem = (item: ParsedItem): ParsedItem => {
+    let type = item.subType || 'UNKNOWN';
+    if (!item.path || item.path.length < 2) return item;
+
+    const stats = getRobustStats(item.path);
+    const maxSpeed = stats.maxSpeed;
+    const avgSpeed = stats.avgSpeed;
+    const km = stats.totalDist;
+
+    // Heuristics based on robust stats
+    if (['WALKING', 'RUNNING', 'ON FOOT'].includes(type)) {
+        // Increased thresholds to prevent false positives
+        if (maxSpeed > 80 || avgSpeed > 30) type = 'DRIVING';
+        else if (maxSpeed > 35 || avgSpeed > 20) type = 'CYCLING';
+    }
+    else if (type === 'CYCLING') {
+        if (avgSpeed > 50) type = 'DRIVING';
+    }
+    else if (type === 'FLYING') {
+        // Only convert to driving if it's clearly NOT a flight (short distance, low speed)
+        // But be careful not to convert taxiing if it's part of a flight (which this fn doesn't see context for, 
+        // but splitActivity handles connection).
+        if (maxSpeed < 180 && km < 100) {
+            type = 'DRIVING';
+        }
+    }
+    else if (type === 'DRIVING') {
+        if (maxSpeed > 400) type = 'FLYING'; 
+    }
+    
+    item.subType = type;
+    item.speedKmH = avgSpeed;
+    return item;
+};
+
+const splitActivity = (item: ParsedItem): ParsedItem[] => {
+    if (!item.path || item.path.length < 2) return [reclassifyItem(item)];
+
+    const points = item.path;
+    const splits: number[] = [];
+
+    // 1. Gap Detection Loop
+    for (let i = 0; i < points.length - 1; i++) {
+        const p1 = points[i];
+        const p2 = points[i+1];
+        if (!p1.timestamp || !p2.timestamp) continue;
+
+        const gapMs = p2.timestamp.getTime() - p1.timestamp.getTime();
+        const distKm = getDistanceFromLatLonInKm(p1.lat, p1.lng, p2.lat, p2.lng);
+
+        // If gap > 20 mins
+        if (gapMs > 20 * 60 * 1000) {
+            // EXCEPTION: If the distance is huge (> 100km), it's likely a flight/train 
+            // jump where GPS was lost. Keep it connected.
+            if (distKm > 100) {
+                // Do nothing, treat as valid segment
+            } else {
+                // Otherwise, it's a stop or separate trip. Split.
+                splits.push(i);
             }
         }
-        return;
     }
 
-    // Interpolate based on distance fraction
-    for (let i = 1; i < path.length - 1; i++) {
-        if (!path[i].timestamp) {
-            const fraction = dists[i] / totalDist;
-            path[i].timestamp = new Date(startTime + (fraction * duration));
+    if (splits.length === 0) return [reclassifyItem(item)];
+
+    const result: ParsedItem[] = [];
+    let startIdx = 0;
+    
+    splits.forEach(splitIdx => {
+        if (splitIdx >= startIdx) {
+            const slice = createSlice(item, startIdx, splitIdx);
+            if (slice) result.push(reclassifyItem(slice));
+            startIdx = splitIdx + 1;
         }
+    });
+
+    if (startIdx < points.length) {
+        const slice = createSlice(item, startIdx, points.length - 1);
+        if (slice) result.push(reclassifyItem(slice));
     }
+
+    return result.length > 0 ? result : [reclassifyItem(item)];
 };
 
 export const detectAndNormalize = (json: any) => {
@@ -154,8 +308,7 @@ export const detectAndNormalize = (json: any) => {
         }
     });
 
-    const normalized: ParsedItem[] = [];
-    const stats = { format: formatType, activityCounts: {} as Record<string, number> };
+    const initialNormalized: ParsedItem[] = [];
     const uniqueDays = new Set<string>();
 
     const getLocalDate = (dateObj: Date | null) => {
@@ -183,7 +336,7 @@ export const detectAndNormalize = (json: any) => {
              if (loc && time.start) {
                  const dateStr = getLocalDate(time.start);
                  uniqueDays.add(dateStr);
-                 normalized.push({
+                 initialNormalized.push({
                      id: `place-${index}`, type: 'PLACE', name: String(name), lat: loc.lat, lng: loc.lng,
                      startTime: time.start, endTime: time.end, duration: time.durationMs, raw: item,
                      dateStr: dateStr
@@ -224,8 +377,7 @@ export const detectAndNormalize = (json: any) => {
 
                 let validPath = path.filter(p => p !== null);
                 
-                // INTERPOLATION: Ensure all points have timestamps
-                if (validPath.length > 0 && time.start && time.end) {
+                if (validPath.length > 0) {
                     interpolateTimestamps(validPath, time.start, time.end);
                 }
 
@@ -237,45 +389,7 @@ export const detectAndNormalize = (json: any) => {
                      effectiveDist = getDistanceFromLatLonInKm(startLoc.lat, startLoc.lng, endLoc.lat, endLoc.lng) * 1000;
                 }
 
-                const km = effectiveDist / 1000;
-                const hours = time.durationMs / 3600000;
-                const speedKmH = hours > 0 ? km / hours : 0;
-
-                // --- STRICTER ACTIVITY VERIFICATION ---
-
-                // 1. Walking / Running / Cycling logic
-                if (['WALKING', 'RUNNING'].includes(type)) {
-                    if (speedKmH > 20) type = 'CYCLING'; // Likely cycling if > 20km/h sustained
-                    if (speedKmH > 50) type = 'DRIVING'; // Likely driving if > 50km/h
-                }
-                else if (type === 'CYCLING') {
-                    if (speedKmH > 70) type = 'DRIVING';
-                }
-
-                // 2. Driving vs Flying vs Train
-                else if (type === 'DRIVING') {
-                    if (speedKmH > 300 && km > 50) {
-                        type = 'TRAIN'; // High speed train
-                        if (speedKmH > 500) type = 'FLYING';
-                    }
-                }
-
-                // 3. Flying check
-                else if (type === 'FLYING') {
-                    // If speed is too slow or dist too short, it's likely driving (e.g. taxiing or error)
-                    if (speedKmH < 50 || km < 20) {
-                        type = 'DRIVING';
-                    } else {
-                        // If flying but no path, fake a straight line for visualization
-                        if (validPath.length < 2 && startLoc && endLoc) {
-                             validPath = [startLoc, endLoc];
-                             validPath[0].timestamp = time.start;
-                             validPath[1].timestamp = time.end;
-                        }
-                    }
-                }
-
-                normalized.push({
+                const parsedAct: ParsedItem = {
                     id: `act-${index}`,
                     type: 'ACTIVITY',
                     subType: type,
@@ -286,11 +400,13 @@ export const detectAndNormalize = (json: any) => {
                     startLoc,
                     endLoc,
                     path: validPath,
-                    isDetailed: validPath.length > 2,
+                    isDetailed: validPath.length > 1,
                     raw: item,
-                    dateStr: dateStr,
-                    speedKmH
-                });
+                    dateStr: dateStr
+                };
+
+                const segments = splitActivity(parsedAct);
+                segments.forEach(seg => initialNormalized.push(seg));
             }
         }
     });
@@ -299,7 +415,9 @@ export const detectAndNormalize = (json: any) => {
         if (!tp.claimed && tp.startTime) {
              const dateStr = getLocalDate(tp.startTime);
              uniqueDays.add(dateStr);
-             normalized.push({
+             interpolateTimestamps(tp.points, tp.startTime, tp.endTime || tp.startTime);
+             
+             initialNormalized.push({
                 id: `tl-path-${i}`,
                 type: 'ACTIVITY',
                 subType: 'RAW_PATH',
@@ -316,13 +434,13 @@ export const detectAndNormalize = (json: any) => {
         }
     });
 
-    // Sort
-    normalized.sort((a, b) => (a.startTime?.getTime() || 0) - (b.startTime?.getTime() || 0));
+    initialNormalized.sort((a, b) => (a.startTime?.getTime() || 0) - (b.startTime?.getTime() || 0));
 
-    normalized.forEach(item => {
+    const stats = { format: formatType, activityCounts: {} as Record<string, number> };
+    initialNormalized.forEach(item => {
         const key = item.type === 'PLACE' ? 'PLACES' : (item.subType || 'UNKNOWN');
         stats.activityCounts[key] = (stats.activityCounts[key] || 0) + 1;
     });
 
-    return { items: normalized, meta: stats, availableDates: Array.from(uniqueDays).sort() };
+    return { items: initialNormalized, meta: stats, availableDates: Array.from(uniqueDays).sort() };
 };
