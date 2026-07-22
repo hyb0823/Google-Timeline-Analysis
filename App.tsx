@@ -14,6 +14,7 @@ const App = () => {
   const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
   const [lastInteractionDate, setLastInteractionDate] = useState<string | null>(null);
+  const [rangeModeActive, setRangeModeActive] = useState(false);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -46,12 +47,14 @@ const App = () => {
       if (d === 'CLEAR') {
           setSelectedDates(new Set());
           setLastInteractionDate(null);
+          setRangeModeActive(false);
           return;
       }
 
       let newSet = new Set(selectedDates);
+      const isRangeTriggered = isShift || rangeModeActive;
 
-      if (isShift && lastInteractionDate && availableDates.includes(lastInteractionDate)) {
+      if (isRangeTriggered && lastInteractionDate && availableDates.includes(lastInteractionDate)) {
           const idx1 = availableDates.indexOf(lastInteractionDate);
           const idx2 = availableDates.indexOf(d);
           if (idx1 !== -1 && idx2 !== -1) {
@@ -60,6 +63,8 @@ const App = () => {
               const range = availableDates.slice(start, end + 1);
               range.forEach(date => newSet.add(date));
           }
+          // Reset range mode after completing a range via UI button
+          if (rangeModeActive) setRangeModeActive(false);
       } else {
           if (newSet.has(d)) newSet.delete(d);
           else newSet.add(d);
@@ -153,6 +158,9 @@ const App = () => {
                selectedDates={selectedDates} 
                onDateToggle={handleDateToggle}
                onQuickJump={handleQuickJump}
+               rangeModeActive={rangeModeActive}
+               setRangeModeActive={setRangeModeActive}
+               lastInteractionDate={lastInteractionDate}
              />
           )}
       </div>

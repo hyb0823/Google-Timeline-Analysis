@@ -1,4 +1,4 @@
-import { ActivityStyles } from './types';
+import { ActivityStyles, GeoPoint } from './types';
 
 export const ACTIVITY_STYLES: ActivityStyles = {
     'DRIVING': { color: '#3B82F6', label: 'Driving' },
@@ -48,3 +48,60 @@ export const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: numb
   const d = R * c;
   return d;
 }
+
+// --- Geodesic / Great Circle Math for Curved Flight Paths ---
+
+const toRad = (d: number) => d * Math.PI / 180;
+const toDeg = (r: number) => r * 180 / Math.PI;
+
+interface Point3D { x: number; y: number; z: number; }
+
+const toVector = (lat: number, lng: number): Point3D => {
+    const phi = toRad(lat);
+    const theta = toRad(lng);
+    const x = Math.cos(phi) * Math.cos(theta);
+    const y = Math.cos(phi) * Math.sin(theta);
+    const z = Math.sin(phi);
+    return { x, y, z };
+};
+
+const toLatLng = (v: Point3D): { lat: number; lng: number } => {
+    const lat = toDeg(Math.asin(v.z));
+    const lng = toDeg(Math.atan2(v.y, v.x));
+    return { lat, lng };
+};
+
+// Spherical Linear Interpolation (Slerp)
+export const getGeodesicPath = (start: GeoPoint, end: GeoPoint, segments: number = 50): [number, number][] => {
+    const p1 = toVector(start.lat, start.lng);
+    const p2 = toVector(end.lat, end.lng);
+
+    // Angle between vectors
+    let dot = p1.x * p2.x + p1.y * p2.y + p1.z * p2.z;
+    // Clamp dot product to [-1, 1] to avoid NaN errors
+    dot = Math.max(-1, Math.min(1, dot));
+    
+    const theta = Math.acos(dot);
+    
+    // If points are very close, return straight line
+    if (theta < 1e-6) {
+        return [[start.lat, start.lng], [end.lat, end.lng]];
+    }
+
+    const path: [number, number][] = [];
+    
+    for (let i = 0; i <= segments; i++) {
+        const f = i / segments;
+        const a = Math.sin((1 - f) * theta) / Math.sin(theta);
+        const b = Math.sin(f * theta) / Math.sin(theta);
+
+        const x = a * p1.x + b * p2.x;
+        const y = a * p1.y + b * p2.y;
+        const z = a * p1.z + b * p2.z;
+
+        const p = toLatLng({ x, y, z });
+        path.push([p.lat, p.lng]);
+    }
+
+    return path;
+};

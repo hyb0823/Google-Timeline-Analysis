@@ -24,7 +24,13 @@ const parseGeo = (input: any): GeoPoint | null => {
         }
 
         // Try to extract timestamp from point if available
-        if (input.timestamp) time = new Date(input.timestamp);
+        if (input.timestamp) {
+             if (typeof input.timestamp === 'string' && /^\d+$/.test(input.timestamp)) {
+                 time = new Date(parseInt(input.timestamp));
+             } else {
+                 time = new Date(input.timestamp);
+             }
+        }
         else if (input.timestampMs) time = new Date(parseInt(input.timestampMs));
     }
 
@@ -65,11 +71,12 @@ const parseTime = (obj: any, fallbackStart?: any, fallbackEnd?: any) => {
 const normalizeActivityType = (rawType: any) => {
     const t = String(rawType || 'UNKNOWN').toUpperCase().replace('_', ' ');
     if (['IN PASSENGER VEHICLE', 'PASSENGER VEHICLE', 'IN CAR', 'DRIVING', 'MOTORCYCLING', 'CAR', 'MOVING', 'VEHICLE'].includes(t)) return 'DRIVING';
-    if (['IN TRAIN', 'TRAIN', 'SUBWAY', 'TRAM', 'RAIL'].includes(t)) return 'TRAIN';
+    if (['IN TRAIN', 'TRAIN', 'SUBWAY', 'IN SUBWAY', 'TRAM', 'IN TRAM', 'RAIL', 'HEAVY RAIL', 'LIGHT RAIL', 'METRO', 'UNDERGROUND'].includes(t)) return 'TRAIN';
     if (['IN BUS', 'BUS'].includes(t)) return 'BUS';
     if (['IN FERRY', 'FERRY', 'BOAT'].includes(t)) return 'FERRY';
     if (['FLYING', 'IN FLIGHT', 'PLANE', 'AIR'].includes(t)) return 'FLYING';
-    if (['WALKING', 'ON FOOT', 'HIKING', 'RUNNING'].includes(t)) return 'WALKING';
+    if (['RUNNING'].includes(t)) return 'RUNNING';
+    if (['WALKING', 'ON FOOT', 'HIKING'].includes(t)) return 'WALKING';
     if (['CYCLING', 'ON BICYCLE'].includes(t)) return 'CYCLING';
     return 'UNKNOWN';
 };
@@ -232,8 +239,8 @@ const splitActivity = (item: ParsedItem): ParsedItem[] => {
         // CRITICAL: If distance is huge and we are not flying, this is likely a missing flight
         // or teleportation (bad timestamps). We MUST split here to prevent this "Jump" from
         // being calculated as "Walking at 5000km/h".
-        // If we split, the post-processor will fill the gap with an "Inferred Flight/Drive".
-        if (!isFlight && distKm > 50) {
+        // Use a higher threshold (150km) to avoid breaking up long road trips with sparse data.
+        if (!isFlight && distKm > 150) {
             shouldSplit = true;
         }
 
@@ -306,9 +313,10 @@ export const detectAndNormalize = (json: any) => {
 
     const getLocalDate = (dateObj: Date | null) => {
         if(!dateObj) return 'UNKNOWN';
-        return dateObj.getFullYear() + '-' +
-               String(dateObj.getMonth() + 1).padStart(2, '0') + '-' +
-               String(dateObj.getDate()).padStart(2, '0');
+        // USE UTC to avoid timezone shifting issues when grouping days
+        return dateObj.getUTCFullYear() + '-' +
+               String(dateObj.getUTCMonth() + 1).padStart(2, '0') + '-' +
+               String(dateObj.getUTCDate()).padStart(2, '0');
     };
 
     rawItems.forEach((item, index) => {
@@ -459,17 +467,21 @@ export const detectAndNormalize = (json: any) => {
                  const hours = timeDiff / 3600000;
                  
                  // Calculate speed if time is positive
-                 const speed = hours > 0 ? dist / hours : Infinity; 
+                 const speed = hours > 0 ? dist / hours : 0; 
 
-                 // Logic: Connect only significant large gaps (> 500km) to avoid noise.
-                 // This ensures flights are connected, but minor gaps in walking/driving are left as is.
-                 if (dist > 500) {
-                     // Determine type based on speed
-                     // If speed is within a fast driving range (e.g. < 180km/h) and time is valid, assume DRIVING.
-                     // Otherwise (teleport, plane, bullet train, or missing data), default to FLYING.
-                     let inferredType = 'FLYING';
-                     if (hours > 0 && speed < 180) {
-                         inferredType = 'DRIVING';
+                 // Logic: Connect only significant large gaps (> 50km) to avoid noise.
+                 if (dist > 50) {
+                     let inferredType = 'DRIVING';
+
+                     // User defined threshold: 200 km/h for flights.
+                     // Added constraint: Distance must be substantial (> 250km) to be a flight.
+                     // This avoids classifying short GPS jumps or fast regional travel as flights.
+                     if (speed > 200 && dist > 250 && speed < 1500) {
+                         inferredType = 'FLYING';
+                     }
+                     // If it's absurdly fast, it's an error/teleportation.
+                     else if (speed >= 1500) {
+                         inferredType = 'UNKNOWN';
                      }
 
                      finalItems.push({
@@ -486,7 +498,8 @@ export const detectAndNormalize = (json: any) => {
                          isDetailed: false,
                          isFallback: true,
                          raw: {},
-                         dateStr: curr.dateStr
+                         dateStr: curr.dateStr,
+                         speedKmH: speed
                      });
                  }
             }

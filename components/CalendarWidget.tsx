@@ -1,16 +1,22 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Layers } from 'lucide-react';
 
 interface CalendarWidgetProps {
   availableDates: string[];
   selectedDates: Set<string>;
   onToggle: (d: string, isShift: boolean) => void;
+  rangeModeActive: boolean;
+  setRangeModeActive: (active: boolean) => void;
+  lastInteractionDate: string | null;
 }
 
 export const CalendarWidget = ({
   availableDates,
   selectedDates,
-  onToggle
+  onToggle,
+  rangeModeActive,
+  setRangeModeActive,
+  lastInteractionDate
 }: CalendarWidgetProps) => {
     // Default view to most recent selected date or last available date
     const initialDate = useMemo(() => {
@@ -22,7 +28,7 @@ export const CalendarWidget = ({
             return new Date(availableDates[availableDates.length - 1]);
         }
         return new Date();
-    }, []); // Intentionally empty dep array to only set once on mount if possible
+    }, []); 
 
     const [viewDate, setViewDate] = useState(initialDate);
 
@@ -63,6 +69,8 @@ export const CalendarWidget = ({
                 {monthDates.map((d, i) => {
                     if (!d) return <div key={i} className="h-8" />;
                     const isSelected = selectedDates.has(d.str);
+                    const isLastClicked = d.str === lastInteractionDate;
+                    
                     return (
                         <button
                             key={i}
@@ -72,6 +80,7 @@ export const CalendarWidget = ({
                                 ${isSelected ? 'bg-blue-600 text-white font-bold shadow-md z-10' : ''}
                                 ${!isSelected && d.hasData ? 'hover:bg-blue-50 text-slate-700 font-medium bg-slate-50' : ''}
                                 ${!isSelected && !d.hasData ? 'text-slate-300 cursor-default' : ''}
+                                ${rangeModeActive && isLastClicked ? 'ring-2 ring-blue-400 ring-offset-1 animate-pulse' : ''}
                             `}
                             title={d.str}
                         >
@@ -81,11 +90,27 @@ export const CalendarWidget = ({
                     )
                 })}
             </div>
-            <div className="mt-2 text-[10px] text-slate-400 text-center flex justify-between items-center">
-               <span>{selectedDates.size} days selected <span className="text-slate-300 ml-1">(Shift+Click for range)</span></span>
-               {selectedDates.size > 0 && (
-                   <button onClick={() => onToggle('CLEAR', false)} className="text-red-500 hover:underline">Clear</button>
-               )}
+            
+            <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                    <button 
+                        onClick={() => setRangeModeActive(!rangeModeActive)}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all shadow-sm ${rangeModeActive ? 'bg-blue-600 text-white ring-2 ring-blue-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                    >
+                        <Layers className="w-3 h-3" />
+                        {rangeModeActive ? 'Cancel Range' : 'Select Range'}
+                    </button>
+                    
+                    {selectedDates.size > 0 && (
+                        <button onClick={() => onToggle('CLEAR', false)} className="text-[10px] font-bold text-red-500 hover:underline uppercase tracking-wider">Clear All</button>
+                    )}
+                </div>
+                
+                <div className="text-[9px] text-slate-400 font-medium italic">
+                   {rangeModeActive 
+                     ? "Tap a date to complete the range selection." 
+                     : `${selectedDates.size} days selected • Shift+Click or use button for ranges`}
+                </div>
             </div>
         </div>
     );

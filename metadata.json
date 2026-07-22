@@ -1,5 +1,6 @@
 {
   "name": "Timeline Visualizer",
   "description": "A powerful tool to visualize and analyze Google Location History (Timeline) JSON files with interactive maps and statistics.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }
