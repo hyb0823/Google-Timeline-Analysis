@@ -52,6 +52,8 @@ export const MapInspector = ({
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isUIVisible, setIsUIVisible] = useState(true);
   const [expandedSegmentIds, setExpandedSegmentIds] = useState<Set<string>>(new Set());
+  const [showSavedPlacesPanel, setShowSavedPlacesPanel] = useState(false);
+
 
   const toggleExpandSegment = (segmentId: string) => {
       setExpandedSegmentIds(prev => {
@@ -278,16 +280,19 @@ export const MapInspector = ({
 
       map.eachLayer((l: any) => { if (!l._url) map.removeLayer(l); });
 
-      // Render Saved Places
+      // Render Saved & Labeled Takeout Places
       if (savedPlaces && savedPlaces.length > 0) {
-          const starIconHtml = `<div style="background-color: #F59E0B; color: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35);">⭐</div>`;
-          const starIcon = L.divIcon({ className: 'bg-transparent border-none', html: starIconHtml, iconSize: [26, 26], iconAnchor: [13, 13] });
-
           savedPlaces.forEach(sp => {
+              const iconEmoji = sp.icon || (sp.category === 'LABELED' ? '📍' : (sp.category === 'REVIEWED' ? '💬' : '⭐'));
+              const bg = sp.category === 'LABELED' ? '#10B981' : (sp.category === 'REVIEWED' ? '#8B5CF6' : '#F59E0B');
+              const starIconHtml = `<div style="background-color: ${bg}; color: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35);">${iconEmoji}</div>`;
+              const starIcon = L.divIcon({ className: 'bg-transparent border-none', html: starIconHtml, iconSize: [26, 26], iconAnchor: [13, 13] });
+
               const marker = L.marker([sp.lat, sp.lng], { icon: starIcon, zIndexOffset: 2000 }).addTo(map);
-              marker.bindPopup(`<b>⭐ ${sp.title}</b>${sp.address ? `<br/><span style="font-size:11px;color:#666;">${sp.address}</span>` : ''}`);
+              marker.bindPopup(`<b>${iconEmoji} ${sp.title}</b>${sp.address ? `<br/><span style="font-size:11px;color:#666;">${sp.address}</span>` : ''}`);
           });
       }
+
 
       if (selectedDates.size === 0) return;
 
@@ -444,7 +449,42 @@ export const MapInspector = ({
              />
          </div>
 
-         <div className="flex-1 overflow-y-auto custom-scrollbar">
+          {savedPlaces && savedPlaces.length > 0 && (
+              <div className="border-b border-amber-200 bg-amber-50/50 p-3">
+                  <button
+                      onClick={() => setShowSavedPlacesPanel(!showSavedPlacesPanel)}
+                      className="w-full flex items-center justify-between text-xs font-bold text-amber-900 hover:text-amber-700 transition-colors"
+                  >
+                      <span className="flex items-center gap-1.5">
+                          <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+                          Takeout Saved & Labeled Places ({savedPlaces.length})
+                      </span>
+                      <span className="text-[10px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full font-mono">
+                          {showSavedPlacesPanel ? '▲ Hide List' : '▼ Inspect All'}
+                      </span>
+                  </button>
+
+                  {showSavedPlacesPanel && (
+                      <div className="mt-3 space-y-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
+                          {savedPlaces.map(sp => (
+                              <div
+                                  key={sp.id}
+                                  onClick={() => panToCoords(sp.lat, sp.lng)}
+                                  className="p-2 bg-white border border-amber-200 rounded-lg hover:border-amber-400 cursor-pointer shadow-sm transition-all text-xs flex items-start gap-2"
+                              >
+                                  <span className="text-base leading-none">{sp.icon || (sp.category === 'LABELED' ? '📍' : '⭐')}</span>
+                                  <div className="min-w-0 flex-1">
+                                      <div className="font-bold text-slate-800 truncate">{sp.title}</div>
+                                      {sp.address && <div className="text-[10px] text-slate-500 truncate">{sp.address}</div>}
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+                  )}
+              </div>
+          )}
+
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
              {visibleData.length === 0 ? (
                  <div className="p-10 text-center text-slate-400 text-sm flex flex-col items-center">
                     <CalendarIcon className="w-8 h-8 mb-2 opacity-30"/>

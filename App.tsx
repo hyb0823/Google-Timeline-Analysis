@@ -73,6 +73,54 @@ const App = () => {
     return dates[dates.length - 1] || '';
   };
 
+  const parsePlacesFeatureCollection = (json: any, defaultCategory: 'SAVED' | 'LABELED' | 'REVIEWED' = 'SAVED', defaultIcon: string = '⭐'): import('./types').SavedPlace[] => {
+    const places: import('./types').SavedPlace[] = [];
+    if (!json) return places;
+
+    const features = Array.isArray(json) ? json : (json.features || json.items || []);
+    features.forEach((f: any, idx: number) => {
+      const coords = f.geometry?.coordinates;
+      const title = f.properties?.location?.name || f.properties?.name || f.properties?.title || 'Saved Point';
+      const address = f.properties?.location?.address || f.properties?.address || f.properties?.description;
+      const url = f.properties?.google_maps_url || f.properties?.url || f.properties?.location_url;
+      
+      let lat: number | null = null;
+      let lng: number | null = null;
+      if (coords && coords.length >= 2) {
+        lat = coords[1];
+        lng = coords[0];
+      } else if (f.location || f.placeLocation) {
+        const loc = f.location || f.placeLocation;
+        if (loc.latitudeE7) { lat = loc.latitudeE7 / 1e7; lng = loc.longitudeE7 / 1e7; }
+        else if (loc.lat) { lat = loc.lat; lng = loc.lng; }
+        else if (loc.latitude) { lat = loc.latitude; lng = loc.longitude; }
+      }
+
+      if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng)) {
+        let icon = defaultIcon;
+        if (defaultCategory === 'LABELED') {
+          const lowerName = String(title).toLowerCase();
+          if (lowerName.includes('home')) icon = '🏠';
+          else if (lowerName.includes('work')) icon = '💼';
+          else icon = '📍';
+        }
+
+        places.push({
+          id: `sp-${defaultCategory}-${idx}`,
+          title,
+          address,
+          lat,
+          lng,
+          url,
+          category: defaultCategory,
+          icon
+        });
+      }
+    });
+
+    return places;
+  };
+
   const handleLoadLocalTakeout = async () => {
     setLoading(true);
     try {
@@ -89,31 +137,37 @@ const App = () => {
         setLastInteractionDate(activeDate);
       }
 
+      const allPlaces: import('./types').SavedPlace[] = [];
+
+      // 1. Saved Places
       try {
         const resSaved = await fetch('/Takeout/Maps (your places)/Saved Places.json');
         if (resSaved.ok) {
           const jsonSaved = await resSaved.json();
-          const places: import('./types').SavedPlace[] = [];
-          if (jsonSaved.type === 'FeatureCollection' && Array.isArray(jsonSaved.features)) {
-            jsonSaved.features.forEach((f: any, idx: number) => {
-              const coords = f.geometry?.coordinates;
-              if (coords && coords.length >= 2) {
-                places.push({
-                  id: `sp-${idx}`,
-                  title: f.properties?.location?.name || f.properties?.name || f.properties?.title || 'Saved Place',
-                  address: f.properties?.location?.address || f.properties?.address,
-                  lat: coords[1],
-                  lng: coords[0],
-                  url: f.properties?.google_maps_url || f.properties?.url
-                });
-              }
-            });
-          }
-          setSavedPlaces(places);
+          allPlaces.push(...parsePlacesFeatureCollection(jsonSaved, 'SAVED', '⭐'));
         }
-      } catch (e) {
-        // Saved places optional
-      }
+      } catch (e) {}
+
+      // 2. Labeled Places (Home, Work)
+      try {
+        const resLabeled = await fetch('/Takeout/Maps/My labeled places/Labeled places.json');
+        if (resLabeled.ok) {
+          const jsonLabeled = await resLabeled.json();
+          allPlaces.push(...parsePlacesFeatureCollection(jsonLabeled, 'LABELED', '📍'));
+        }
+      } catch (e) {}
+
+      // 3. Reviews
+      try {
+        const resReviews = await fetch('/Takeout/Maps (your places)/Reviews.json');
+        if (resReviews.ok) {
+          const jsonReviews = await resReviews.json();
+          allPlaces.push(...parsePlacesFeatureCollection(jsonReviews, 'REVIEWED', '💬'));
+        }
+      } catch (e) {}
+
+      setSavedPlaces(allPlaces);
+
       setActiveTab('inspector');
       setLoading(false);
     } catch (err: any) {
@@ -130,55 +184,8 @@ const App = () => {
       try {
         const text = e.target?.result as string;
         const json = JSON.parse(text);
-        const places: import('./types').SavedPlace[] = [];
-
-        // Support GeoJSON format (including Google Takeout Saved Places.json)
-        if (json.type === 'FeatureCollection' && Array.isArray(json.features)) {
-          json.features.forEach((f: any, idx: number) => {
-            const coords = f.geometry?.coordinates;
-            if (coords && coords.length >= 2) {
-              const title = f.properties?.location?.name || f.properties?.name || f.properties?.title || 'Saved Place';
-              const address = f.properties?.location?.address || f.properties?.address || f.properties?.description;
-              const url = f.properties?.google_maps_url || f.properties?.url || f.properties?.location_url;
-              places.push({
-                id: `sp-${idx}`,
-                title,
-                address,
-                lat: coords[1],
-                lng: coords[0],
-                url
-              });
-            }
-          });
-        }
-
-        // Support Google Takeout Saved Places JSON format (array or items)
-        else {
-          const items = Array.isArray(json) ? json : (json.features || json.items || Object.values(json).find(v => Array.isArray(v)) as any[] || []);
-          items.forEach((item: any, idx: number) => {
-            const title = item.title || item.name || item.properties?.name || 'Saved Place';
-            const loc = item.geometry?.coordinates ? { lat: item.geometry.coordinates[1], lng: item.geometry.coordinates[0] }
-                     : (item.location || item.placeLocation || item);
-            let lat: number | null = null;
-            let lng: number | null = null;
-            if (loc) {
-              if (loc.latitudeE7) { lat = loc.latitudeE7 / 1e7; lng = loc.longitudeE7 / 1e7; }
-              else if (loc.lat) { lat = loc.lat; lng = loc.lng; }
-              else if (loc.latitude) { lat = loc.latitude; lng = loc.longitude; }
-            }
-            if (lat && lng) {
-              places.push({
-                id: `sp-${idx}`,
-                title,
-                address: item.address || item.properties?.address,
-                lat,
-                lng,
-                url: item.url || item.googleMapsUrl
-              });
-            }
-          });
-        }
-        setSavedPlaces(places);
+        const places = parsePlacesFeatureCollection(json, 'SAVED', '⭐');
+        setSavedPlaces(prev => [...prev, ...places]);
         alert(`Successfully imported ${places.length} saved places!`);
       } catch (err: any) {
         alert("Error importing saved places: " + err.message);
@@ -186,6 +193,7 @@ const App = () => {
     };
     reader.readAsText(file);
   };
+
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];

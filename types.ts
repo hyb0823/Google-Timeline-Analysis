@@ -47,7 +47,10 @@ export interface SavedPlace {
   lng: number;
   url?: string;
   listName?: string;
+  category?: 'SAVED' | 'LABELED' | 'REVIEWED';
+  icon?: string;
 }
+
 
 
 export interface ActivityStyles {
