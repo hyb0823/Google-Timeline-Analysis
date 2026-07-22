@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Calendar as CalendarIcon, LocateFixed, ChevronDown, Menu, X, Filter, Zap, Target, Eye, EyeOff, Star } from 'lucide-react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { DisplayPoint, ParsedItem, SavedPlace } from '../types';
 import { ACTIVITY_STYLES, formatDistance, formatDuration, safeGetStyle, getGeodesicPath, simplifyPath } from '../utils';
 import { CalendarWidget } from './CalendarWidget';
+
 
 // High-contrast categorical palette for differentiating segments
 const CATEGORICAL_COLORS = [
@@ -203,7 +206,7 @@ export const MapInspector = ({
 
   const fitMapBounds = (map: any, currentVisible: ParsedItem[]) => {
       if (!map || currentVisible.length === 0) return;
-      const bounds = window.L.latLngBounds();
+      const bounds = L.latLngBounds();
       currentVisible.forEach(item => {
           if (item.type === 'ACTIVITY' && item.path) {
               item.path.forEach(p => bounds.extend([p.lat, p.lng]));
@@ -232,7 +235,7 @@ export const MapInspector = ({
   };
 
   useEffect(() => {
-      if (!isLeafletLoaded || typeof window.L === 'undefined' || !mapRef.current) return;
+      if (!mapRef.current) return;
 
       if (mapInstanceRef.current) {
           mapInstanceRef.current.remove();
@@ -240,12 +243,14 @@ export const MapInspector = ({
       }
 
       // Enable hardware-accelerated 2D Canvas rendering for ultra-fast performance
-      const map = window.L.map(mapRef.current, { center: [0, 0], zoom: 2, zoomControl: false, preferCanvas: true });
-      window.L.control.zoom({ position: 'topright' }).addTo(map);
-      window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      const map = L.map(mapRef.current, { center: [0, 0], zoom: 2, zoomControl: false, preferCanvas: true });
+      L.control.zoom({ position: 'topright' }).addTo(map);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '© OpenStreetMap', maxZoom: 19
       }).addTo(map);
       mapInstanceRef.current = map;
+
+      setTimeout(() => { map.invalidateSize(); }, 200);
 
       resizeObserverRef.current = new ResizeObserver(() => { map.invalidateSize(); });
       resizeObserverRef.current.observe(mapRef.current);
@@ -254,7 +259,7 @@ export const MapInspector = ({
           if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
           if (resizeObserverRef.current) resizeObserverRef.current.disconnect();
       };
-  }, [isLeafletLoaded]);
+  }, []);
 
   useEffect(() => {
       const map = mapInstanceRef.current;
@@ -265,10 +270,10 @@ export const MapInspector = ({
       // Render Saved Places
       if (savedPlaces && savedPlaces.length > 0) {
           const starIconHtml = `<div style="background-color: #F59E0B; color: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35);">⭐</div>`;
-          const starIcon = window.L.divIcon({ className: 'bg-transparent border-none', html: starIconHtml, iconSize: [26, 26], iconAnchor: [13, 13] });
+          const starIcon = L.divIcon({ className: 'bg-transparent border-none', html: starIconHtml, iconSize: [26, 26], iconAnchor: [13, 13] });
 
           savedPlaces.forEach(sp => {
-              const marker = window.L.marker([sp.lat, sp.lng], { icon: starIcon, zIndexOffset: 2000 }).addTo(map);
+              const marker = L.marker([sp.lat, sp.lng], { icon: starIcon, zIndexOffset: 2000 }).addTo(map);
               marker.bindPopup(`<b>⭐ ${sp.title}</b>${sp.address ? `<br/><span style="font-size:11px;color:#666;">${sp.address}</span>` : ''}`);
           });
       }
@@ -305,7 +310,7 @@ export const MapInspector = ({
                       lineCap: 'round'
                   };
 
-                  window.L.polyline(curvedPath, lineOptions).addTo(map);
+                  L.polyline(curvedPath, lineOptions).addTo(map);
 
                   const dotOptions = {
                     radius: isFocused ? 7 : 5,
@@ -316,13 +321,13 @@ export const MapInspector = ({
                     interactive: false
                   };
 
-                  window.L.circleMarker([item.startLoc.lat, item.startLoc.lng], dotOptions).addTo(map);
-                  window.L.circleMarker([item.endLoc.lat, item.endLoc.lng], dotOptions).addTo(map);
+                  L.circleMarker([item.startLoc.lat, item.startLoc.lng], dotOptions).addTo(map);
+                  L.circleMarker([item.endLoc.lat, item.endLoc.lng], dotOptions).addTo(map);
 
               } else {
                   // Apply Ramer-Douglas-Peucker line simplification for lightning-fast polyline rendering
                   const simplified = simplifyPath(item.path, 0.00008);
-                  window.L.polyline(simplified.map(p => [p.lat, p.lng]), { 
+                  L.polyline(simplified.map(p => [p.lat, p.lng]), { 
                       color: color, 
                       weight: weight, 
                       opacity: opacity,
@@ -333,22 +338,22 @@ export const MapInspector = ({
           }
       });
 
-      const pointLayers = window.L.layerGroup().addTo(map);
+      const pointLayers = L.layerGroup().addTo(map);
       viewPoints.forEach(p => {
           if (p.parentType === 'FLYING') return;
           const isVisit = p.sequenceType === 'VISIT';
           const color = isVisit ? '#EF4444' : safeGetStyle(p.parentType).color;
           const zIndex = isVisit ? 1000 : 100;
           
-          const iconHtml = `<div style="background-color: ${color}; color: white; width: ${isVisit ? '22px' : '12px'}; height: ${isVisit ? '22px' : '12px'}; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: ${isVisit ? '10px' : '0px'}; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${isVisit ? p.sequenceId : ''}</div>`;
-          const icon = window.L.divIcon({ className: 'bg-transparent border-none', html: iconHtml, iconSize: isVisit ? [22, 22] : [12, 12], iconAnchor: isVisit ? [11, 11] : [6, 6] });
-          window.L.marker([p.lat, p.lng], { icon, zIndexOffset: zIndex }).addTo(pointLayers);
+          const iconHtml = `<div style="background-color: ${color}; color: white; width: ${isVisit ? '22px' : '12px'}; height: ${isVisit ? '22px' : '12px'}; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${isVisit ? p.sequenceId : ''}</div>`;
+          const icon = L.divIcon({ className: 'bg-transparent border-none', html: iconHtml, iconSize: isVisit ? [22, 22] : [12, 12], iconAnchor: isVisit ? [11, 11] : [6, 6] });
+          L.marker([p.lat, p.lng], { icon, zIndexOffset: zIndex }).addTo(pointLayers);
       });
 
       if (autoFit && visibleData.length > 0) fitMapBounds(map, visibleData);
       map.invalidateSize();
 
-  }, [isLeafletLoaded, selectedDates, visibleData, viewPoints, autoFit, focusedType, savedPlaces]);
+  }, [selectedDates, visibleData, viewPoints, autoFit, focusedType, savedPlaces]);
 
 
 
