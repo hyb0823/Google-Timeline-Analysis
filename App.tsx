@@ -6,6 +6,35 @@ import { OverviewTab } from './components/OverviewTab';
 import { MapInspector } from './components/MapInspector';
 import { formatDistance } from './utils';
 
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: any }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("ErrorBoundary caught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 text-center bg-red-50 text-red-700 font-sans">
+          <h2 className="text-xl font-bold mb-2">Something went wrong while rendering the view</h2>
+          <p className="text-sm font-mono bg-red-100 p-3 rounded max-w-xl mx-auto mb-4">{String(this.state.error?.message || this.state.error)}</p>
+          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-red-600 text-white rounded font-bold">Reload Page</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+
 const App = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'inspector'>('inspector');
   const [data, setData] = useState<ParsedItem[] | null>(null);
@@ -296,6 +325,7 @@ const App = () => {
       </header>
 
       <div className="flex-1 flex overflow-hidden bg-slate-50">
+        <ErrorBoundary>
           {activeTab === 'overview' && (
               <div className="flex-1 overflow-y-auto">
                   <OverviewTab data={data} availableDates={availableDates} />
@@ -316,7 +346,9 @@ const App = () => {
                savedPlaces={savedPlaces}
              />
           )}
+        </ErrorBoundary>
       </div>
+
     </div>
   );
 };

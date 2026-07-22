@@ -51,9 +51,20 @@ export const MapInspector = ({
   const [isLeafletLoaded, setIsLeafletLoaded] = useState(false);
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isUIVisible, setIsUIVisible] = useState(true);
+  const [expandedSegmentIds, setExpandedSegmentIds] = useState<Set<string>>(new Set());
+
+  const toggleExpandSegment = (segmentId: string) => {
+      setExpandedSegmentIds(prev => {
+          const next = new Set(prev);
+          if (next.has(segmentId)) next.delete(segmentId);
+          else next.add(segmentId);
+          return next;
+      });
+  };
 
   // Initialize all types as visible by default
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set(['VISIT', ...Object.keys(ACTIVITY_STYLES)]));
+
 
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
