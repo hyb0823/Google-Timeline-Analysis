@@ -16,6 +16,86 @@ const App = () => {
   const [lastInteractionDate, setLastInteractionDate] = useState<string | null>(null);
   const [rangeModeActive, setRangeModeActive] = useState(false);
 
+  const [savedPlaces, setSavedPlaces] = useState<import('./types').SavedPlace[]>([]);
+
+  const handleUpdateItemType = (itemId: string, newType: string) => {
+    if (!data) return;
+    setData(prevData => {
+      if (!prevData) return null;
+      return prevData.map(item => {
+        if (item.id === itemId) {
+          return { ...item, subType: newType };
+        }
+        return item;
+      });
+    });
+  };
+
+  const handleSavedPlacesUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        const json = JSON.parse(text);
+        const places: import('./types').SavedPlace[] = [];
+
+        // Support GeoJSON format (including Google Takeout Saved Places.json)
+        if (json.type === 'FeatureCollection' && Array.isArray(json.features)) {
+          json.features.forEach((f: any, idx: number) => {
+            const coords = f.geometry?.coordinates;
+            if (coords && coords.length >= 2) {
+              const title = f.properties?.location?.name || f.properties?.name || f.properties?.title || 'Saved Place';
+              const address = f.properties?.location?.address || f.properties?.address || f.properties?.description;
+              const url = f.properties?.google_maps_url || f.properties?.url || f.properties?.location_url;
+              places.push({
+                id: `sp-${idx}`,
+                title,
+                address,
+                lat: coords[1],
+                lng: coords[0],
+                url
+              });
+            }
+          });
+        }
+
+        // Support Google Takeout Saved Places JSON format (array or items)
+        else {
+          const items = Array.isArray(json) ? json : (json.features || json.items || Object.values(json).find(v => Array.isArray(v)) as any[] || []);
+          items.forEach((item: any, idx: number) => {
+            const title = item.title || item.name || item.properties?.name || 'Saved Place';
+            const loc = item.geometry?.coordinates ? { lat: item.geometry.coordinates[1], lng: item.geometry.coordinates[0] }
+                     : (item.location || item.placeLocation || item);
+            let lat: number | null = null;
+            let lng: number | null = null;
+            if (loc) {
+              if (loc.latitudeE7) { lat = loc.latitudeE7 / 1e7; lng = loc.longitudeE7 / 1e7; }
+              else if (loc.lat) { lat = loc.lat; lng = loc.lng; }
+              else if (loc.latitude) { lat = loc.latitude; lng = loc.longitude; }
+            }
+            if (lat && lng) {
+              places.push({
+                id: `sp-${idx}`,
+                title,
+                address: item.address || item.properties?.address,
+                lat,
+                lng,
+                url: item.url || item.googleMapsUrl
+              });
+            }
+          });
+        }
+        setSavedPlaces(places);
+        alert(`Successfully imported ${places.length} saved places!`);
+      } catch (err: any) {
+        alert("Error importing saved places: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -63,7 +143,6 @@ const App = () => {
               const range = availableDates.slice(start, end + 1);
               range.forEach(date => newSet.add(date));
           }
-          // Reset range mode after completing a range via UI button
           if (rangeModeActive) setRangeModeActive(false);
       } else {
           if (newSet.has(d)) newSet.delete(d);
@@ -139,6 +218,10 @@ const App = () => {
                 </button>
             </div>
             <div className="flex items-center gap-4 text-sm">
+                <label className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium px-3 py-1.5 rounded cursor-pointer transition-colors">
+                  ⭐ Import Saved Places
+                  <input type="file" accept=".json,.geojson,.csv" onChange={handleSavedPlacesUpload} className="hidden" />
+                </label>
                 <button onClick={() => setData(null)} className="text-red-500 hover:bg-red-50 px-3 py-1.5 rounded">Close File</button>
             </div>
          </div>
@@ -161,11 +244,14 @@ const App = () => {
                rangeModeActive={rangeModeActive}
                setRangeModeActive={setRangeModeActive}
                lastInteractionDate={lastInteractionDate}
+               onUpdateItemType={handleUpdateItemType}
+               savedPlaces={savedPlaces}
              />
           )}
       </div>
     </div>
   );
 };
+
 
 export default App;

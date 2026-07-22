@@ -27,6 +27,7 @@ export interface ParsedItem {
 
 export interface DisplayPoint {
   id: string;
+  parentId?: string;
   sequenceId: number;
   sequenceType: 'VISIT' | 'PATH';
   lat: number;
@@ -34,8 +35,20 @@ export interface DisplayPoint {
   timestamp: Date | null;
   type: 'PLACE' | 'POINT';
   parentType: string;
+  subType?: string;
   parentActivity?: string;
 }
+
+export interface SavedPlace {
+  id: string;
+  title: string;
+  address?: string;
+  lat: number;
+  lng: number;
+  url?: string;
+  listName?: string;
+}
+
 
 export interface ActivityStyles {
   [key: string]: { color: string; label: string };

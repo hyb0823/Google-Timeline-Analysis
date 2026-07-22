@@ -105,3 +105,60 @@ export const getGeodesicPath = (start: GeoPoint, end: GeoPoint, segments: number
 
     return path;
 };
+
+// --- Ramer-Douglas-Peucker (RDP) Line Simplification ---
+
+const getPerpendicularDistance = (point: GeoPoint, lineStart: GeoPoint, lineEnd: GeoPoint) => {
+    const dx = lineEnd.lng - lineStart.lng;
+    const dy = lineEnd.lat - lineStart.lat;
+
+    if (dx === 0 && dy === 0) {
+        const dLat = point.lat - lineStart.lat;
+        const dLng = point.lng - lineStart.lng;
+        return Math.sqrt(dLat * dLat + dLng * dLng);
+    }
+
+    const u = ((point.lng - lineStart.lng) * dx + (point.lat - lineStart.lat) * dy) / (dx * dx + dy * dy);
+
+    let nearestLat: number;
+    let nearestLng: number;
+
+    if (u < 0) {
+        nearestLat = lineStart.lat;
+        nearestLng = lineStart.lng;
+    } else if (u > 1) {
+        nearestLat = lineEnd.lat;
+        nearestLng = lineEnd.lng;
+    } else {
+        nearestLat = lineStart.lat + u * dy;
+        nearestLng = lineStart.lng + u * dx;
+    }
+
+    const dLat = point.lat - nearestLat;
+    const dLng = point.lng - nearestLng;
+    return Math.sqrt(dLat * dLat + dLng * dLng);
+};
+
+export const simplifyPath = (points: GeoPoint[], tolerance: number = 0.00008): GeoPoint[] => {
+    if (!points || points.length <= 2) return points;
+
+    let maxDist = 0;
+    let maxIdx = 0;
+    const end = points.length - 1;
+
+    for (let i = 1; i < end; i++) {
+        const dist = getPerpendicularDistance(points[i], points[0], points[end]);
+        if (dist > maxDist) {
+            maxDist = dist;
+            maxIdx = i;
+        }
+    }
+
+    if (maxDist > tolerance) {
+        const left = simplifyPath(points.slice(0, maxIdx + 1), tolerance);
+        const right = simplifyPath(points.slice(maxIdx), tolerance);
+        return [...left.slice(0, left.length - 1), ...right];
+    } else {
+        return [points[0], points[end]];
+    }
+};

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Calendar as CalendarIcon, LocateFixed, ChevronDown, Menu, X, Filter, Zap, Target, Eye, EyeOff } from 'lucide-react';
-import { DisplayPoint, ParsedItem } from '../types';
-import { ACTIVITY_STYLES, formatDistance, formatDuration, safeGetStyle, getGeodesicPath } from '../utils';
+import { Calendar as CalendarIcon, LocateFixed, ChevronDown, Menu, X, Filter, Zap, Target, Eye, EyeOff, Star } from 'lucide-react';
+import { DisplayPoint, ParsedItem, SavedPlace } from '../types';
+import { ACTIVITY_STYLES, formatDistance, formatDuration, safeGetStyle, getGeodesicPath, simplifyPath } from '../utils';
 import { CalendarWidget } from './CalendarWidget';
 
 // High-contrast categorical palette for differentiating segments
@@ -27,6 +27,8 @@ interface MapInspectorProps {
   rangeModeActive: boolean;
   setRangeModeActive: (active: boolean) => void;
   lastInteractionDate: string | null;
+  onUpdateItemType?: (itemId: string, newType: string) => void;
+  savedPlaces?: SavedPlace[];
 }
 
 export const MapInspector = ({ 
@@ -37,7 +39,9 @@ export const MapInspector = ({
   onQuickJump,
   rangeModeActive,
   setRangeModeActive,
-  lastInteractionDate
+  lastInteractionDate,
+  onUpdateItemType,
+  savedPlaces = []
 }: MapInspectorProps) => {
   const [viewPoints, setViewPoints] = useState<DisplayPoint[]>([]);
   const [autoFit, setAutoFit] = useState(true);
@@ -116,6 +120,7 @@ export const MapInspector = ({
           if (item.type === 'PLACE' && item.lat && item.lng) {
               points.push({
                   id: `v-${item.id}`,
+                  parentId: item.id,
                   sequenceId: visitCounter++,
                   sequenceType: 'VISIT',
                   lat: item.lat,
@@ -123,29 +128,32 @@ export const MapInspector = ({
                   timestamp: item.startTime,
                   type: 'PLACE',
                   parentType: 'Visit',
+                  subType: 'VISIT',
                   parentActivity: item.name
               });
           } else if (item.type === 'ACTIVITY' && item.path) {
-              const subType = item.subType || 'Travel';
+              const subType = item.subType || 'UNKNOWN';
               const showPoints = item.subType !== 'FLYING';
               
-              if (showPoints) {
-                  item.path.forEach((p, idx) => {
-                      points.push({
-                          id: `p-${item.id}-${idx}`,
-                          sequenceId: pathCounter++,
-                          sequenceType: 'PATH',
-                          lat: p.lat,
-                          lng: p.lng,
-                          timestamp: p.timestamp || item.startTime,
-                          type: 'POINT',
-                          parentType: subType,
-                          parentActivity: `${subType} (${formatDuration(item.duration)})`
-                      });
+              if (showPoints && item.path.length > 0) {
+                  // Only push the start point of each activity to sidebar list for clean view, or first point
+                  points.push({
+                      id: `p-${item.id}-0`,
+                      parentId: item.id,
+                      sequenceId: pathCounter++,
+                      sequenceType: 'PATH',
+                      lat: item.path[0].lat,
+                      lng: item.path[0].lng,
+                      timestamp: item.path[0].timestamp || item.startTime,
+                      type: 'POINT',
+                      parentType: subType,
+                      subType: subType,
+                      parentActivity: `${safeGetStyle(subType).label} (${formatDuration(item.duration)})`
                   });
               } else if (item.path.length > 0) {
                   points.push({
                      id: `p-${item.id}-start`,
+                     parentId: item.id,
                      sequenceId: pathCounter++,
                      sequenceType: 'PATH',
                      lat: item.path[0].lat,
@@ -153,7 +161,8 @@ export const MapInspector = ({
                      timestamp: item.startTime,
                      type: 'POINT',
                      parentType: subType,
-                     parentActivity: `${subType} Start`
+                     subType: subType,
+                     parentActivity: `${safeGetStyle(subType).label} Start`
                   });
               }
           }
@@ -171,6 +180,10 @@ export const MapInspector = ({
               bounds.extend([item.lat, item.lng]);
           }
       });
+
+      if (savedPlaces && savedPlaces.length > 0) {
+          savedPlaces.forEach(sp => bounds.extend([sp.lat, sp.lng]));
+      }
       
       if (bounds.isValid()) {
           map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17, animate: true });
@@ -179,7 +192,7 @@ export const MapInspector = ({
 
   const panToPoint = (p: DisplayPoint) => {
       if (mapInstanceRef.current) {
-          mapInstanceRef.current.setView([p.lat, p.lng], 12, { animate: true });
+          mapInstanceRef.current.setView([p.lat, p.lng], 14, { animate: true });
       }
   };
 
@@ -191,7 +204,8 @@ export const MapInspector = ({
           mapInstanceRef.current = null;
       }
 
-      const map = window.L.map(mapRef.current, { center: [0, 0], zoom: 2, zoomControl: false });
+      // Enable hardware-accelerated 2D Canvas rendering for ultra-fast performance
+      const map = window.L.map(mapRef.current, { center: [0, 0], zoom: 2, zoomControl: false, preferCanvas: true });
       window.L.control.zoom({ position: 'topright' }).addTo(map);
       window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '© OpenStreetMap', maxZoom: 19
@@ -209,9 +223,22 @@ export const MapInspector = ({
 
   useEffect(() => {
       const map = mapInstanceRef.current;
-      if (!map || selectedDates.size === 0) return;
+      if (!map) return;
 
       map.eachLayer((l: any) => { if (!l._url) map.removeLayer(l); });
+
+      // Render Saved Places
+      if (savedPlaces && savedPlaces.length > 0) {
+          const starIconHtml = `<div style="background-color: #F59E0B; color: white; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">⭐</div>`;
+          const starIcon = window.L.divIcon({ className: 'bg-transparent border-none', html: starIconHtml, iconSize: [22, 22], iconAnchor: [11, 11] });
+
+          savedPlaces.forEach(sp => {
+              const marker = window.L.marker([sp.lat, sp.lng], { icon: starIcon, zIndexOffset: 2000 }).addTo(map);
+              marker.bindPopup(`<b>⭐ ${sp.title}</b>${sp.address ? `<br/><span style="font-size:11px;color:#666;">${sp.address}</span>` : ''}`);
+          });
+      }
+
+      if (selectedDates.size === 0) return;
 
       // Group segments for categorical indexing
       const segmentsOfType = visibleData.filter(d => d.subType === focusedType);
@@ -229,8 +256,8 @@ export const MapInspector = ({
               }
 
               // Refined thin line weights for clean static screenshots
-              const weight = isFocused ? 2.5 : (item.subType === 'FLYING' ? 1.0 : 1.5);
-              const opacity = isFocused ? 0.9 : 0.4;
+              const weight = isFocused ? 3.0 : (item.subType === 'FLYING' ? 1.5 : 2.0);
+              const opacity = isFocused ? 0.95 : 0.6;
               
               if (item.subType === 'FLYING' && item.startLoc && item.endLoc) {
                   const curvedPath = getGeodesicPath(item.startLoc, item.endLoc);
@@ -239,15 +266,14 @@ export const MapInspector = ({
                       color: color, 
                       weight: weight, 
                       opacity: opacity,
-                      dashArray: '4, 6', // Static dashed line for flights
+                      dashArray: '4, 6',
                       lineCap: 'round'
                   };
 
                   window.L.polyline(curvedPath, lineOptions).addTo(map);
 
-                  // Add "Airport dots" for destination and origin
                   const dotOptions = {
-                    radius: isFocused ? 4 : 3,
+                    radius: isFocused ? 5 : 4,
                     fillColor: 'white',
                     fillOpacity: 1,
                     color: color,
@@ -259,7 +285,9 @@ export const MapInspector = ({
                   window.L.circleMarker([item.endLoc.lat, item.endLoc.lng], dotOptions).addTo(map);
 
               } else {
-                  window.L.polyline(item.path, { 
+                  // Apply Ramer-Douglas-Peucker line simplification for lightning-fast polyline rendering
+                  const simplified = simplifyPath(item.path, 0.00008);
+                  window.L.polyline(simplified.map(p => [p.lat, p.lng]), { 
                       color: color, 
                       weight: weight, 
                       opacity: opacity,
@@ -277,15 +305,16 @@ export const MapInspector = ({
           const color = isVisit ? '#EF4444' : safeGetStyle(p.parentType).color;
           const zIndex = isVisit ? 1000 : 100;
           
-          const iconHtml = `<div style="background-color: ${color}; color: white; width: ${isVisit ? '20px' : '8px'}; height: ${isVisit ? '20px' : '8px'}; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: ${isVisit ? '9px' : '0px'}; font-weight: bold; border: 1px solid white; box-shadow: 0 1px 2px rgba(0,0,0,0.15);">${isVisit ? p.sequenceId : ''}</div>`;
-          const icon = window.L.divIcon({ className: 'bg-transparent border-none', html: iconHtml, iconSize: isVisit ? [20, 20] : [8, 8], iconAnchor: isVisit ? [10, 10] : [4, 4] });
+          const iconHtml = `<div style="background-color: ${color}; color: white; width: ${isVisit ? '20px' : '10px'}; height: ${isVisit ? '20px' : '10px'}; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: ${isVisit ? '9px' : '0px'}; font-weight: bold; border: 1.5px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.25);">${isVisit ? p.sequenceId : ''}</div>`;
+          const icon = window.L.divIcon({ className: 'bg-transparent border-none', html: iconHtml, iconSize: isVisit ? [20, 20] : [10, 10], iconAnchor: isVisit ? [10, 10] : [5, 5] });
           window.L.marker([p.lat, p.lng], { icon, zIndexOffset: zIndex }).addTo(pointLayers);
       });
 
       if (autoFit && visibleData.length > 0) fitMapBounds(map, visibleData);
       map.invalidateSize();
 
-  }, [selectedDates, visibleData, viewPoints, autoFit, focusedType]);
+  }, [selectedDates, visibleData, viewPoints, autoFit, focusedType, savedPlaces]);
+
 
   return (
     <div className="flex h-full w-full relative overflow-hidden bg-slate-900">
@@ -370,28 +399,49 @@ export const MapInspector = ({
                  <div className="divide-y divide-slate-50">
                      {viewPoints.map(p => {
                          const isPlace = p.sequenceType === 'VISIT';
+                         const currentStyle = safeGetStyle(p.subType);
                          return (
-                             <button
+                             <div
                                 key={p.id}
                                 onClick={() => { 
                                     panToPoint(p); 
                                     if (window.innerWidth < 1024) setSidebarOpen(false); 
                                 }}
-                                className={`w-full text-left px-4 py-3 hover:bg-blue-50 flex items-start gap-3 transition-colors group border-l-4 ${isPlace ? 'border-red-400 bg-red-50/30' : 'border-transparent'}`}
+                                className={`w-full text-left px-4 py-3 hover:bg-blue-50/70 flex items-start gap-3 transition-colors cursor-pointer group border-l-4 ${isPlace ? 'border-red-400 bg-red-50/30' : 'border-slate-200'}`}
                              >
-                                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5 shadow-sm ${isPlace ? 'bg-red-500 text-white' : 'bg-slate-200 text-slate-600 group-hover:bg-blue-200 group-hover:text-blue-700'}`}>
+                                 <div 
+                                   className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5 shadow-sm text-white`}
+                                   style={{ backgroundColor: isPlace ? '#EF4444' : currentStyle.color }}
+                                 >
                                      {p.sequenceId}
                                  </div>
                                  <div className="min-w-0 flex-1">
                                      <div className="flex items-center justify-between text-xs mb-1">
                                          <span className="font-mono font-medium text-slate-600">{p.timestamp ? p.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'}</span>
-                                         {isPlace && <span className="bg-red-100 text-red-600 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight">Visit</span>}
+                                         {isPlace ? (
+                                             <span className="bg-red-100 text-red-600 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight">Visit</span>
+                                         ) : (
+                                             <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+                                                 <select
+                                                     value={p.subType || 'UNKNOWN'}
+                                                     onChange={(e) => p.parentId && onUpdateItemType && onUpdateItemType(p.parentId, e.target.value)}
+                                                     className="appearance-none bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-800 text-[10px] font-bold py-0.5 pl-2 pr-5 rounded cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                                 >
+                                                     {Object.entries(ACTIVITY_STYLES).map(([typeKey, styleObj]) => (
+                                                         <option key={typeKey} value={typeKey}>
+                                                             {styleObj.label}
+                                                         </option>
+                                                     ))}
+                                                 </select>
+                                                 <ChevronDown className="w-3 h-3 text-slate-500 absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                             </div>
+                                         )}
                                      </div>
                                      <div className="text-xs text-slate-700 font-medium truncate">{p.parentActivity}</div>
                                  </div>
-                             </button>
+                             </div>
                          );
-                     })}
+                      })}
                  </div>
              )}
          </div>
