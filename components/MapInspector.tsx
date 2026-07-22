@@ -136,23 +136,39 @@ export const MapInspector = ({
               const showPoints = item.subType !== 'FLYING';
               
               if (showPoints && item.path.length > 0) {
-                  item.path.forEach((p, idx) => {
+                  // Only push raw points to map layer if segment is expanded or single point
+                  const isExpanded = expandedSegmentIds.has(item.id);
+                  if (isExpanded) {
+                      item.path.forEach((p, idx) => {
+                          points.push({
+                              id: `p-${item.id}-${idx}`,
+                              parentId: item.id,
+                              sequenceId: pathCounter++,
+                              sequenceType: 'PATH',
+                              lat: p.lat,
+                              lng: p.lng,
+                              timestamp: p.timestamp || item.startTime,
+                              type: 'POINT',
+                              parentType: subType,
+                              subType: subType,
+                              parentActivity: `${safeGetStyle(subType).label} (Pt ${idx + 1}/${item.path.length})`
+                          });
+                      });
+                  } else {
                       points.push({
-                          id: `p-${item.id}-${idx}`,
+                          id: `p-${item.id}-0`,
                           parentId: item.id,
                           sequenceId: pathCounter++,
                           sequenceType: 'PATH',
-                          lat: p.lat,
-                          lng: p.lng,
-                          timestamp: p.timestamp || item.startTime,
+                          lat: item.path[0].lat,
+                          lng: item.path[0].lng,
+                          timestamp: item.path[0].timestamp || item.startTime,
                           type: 'POINT',
                           parentType: subType,
                           subType: subType,
-                          parentActivity: item.path.length > 1
-                              ? `${safeGetStyle(subType).label} (Pt ${idx + 1}/${item.path.length})`
-                              : `${safeGetStyle(subType).label} (${formatDuration(item.duration)})`
+                          parentActivity: `${safeGetStyle(subType).label} (${formatDuration(item.duration)})`
                       });
-                  });
+                  }
               } else if (item.path.length > 0) {
                   points.push({
                      id: `p-${item.id}-start`,
@@ -171,7 +187,7 @@ export const MapInspector = ({
           }
       });
       setViewPoints(points);
-  }, [visibleData]);
+  }, [visibleData, expandedSegmentIds]);
 
   const fitMapBounds = (map: any, currentVisible: ParsedItem[]) => {
       if (!map || currentVisible.length === 0) return;
@@ -193,10 +209,14 @@ export const MapInspector = ({
       }
   };
 
-  const panToPoint = (p: DisplayPoint) => {
+  const panToCoords = (lat: number, lng: number) => {
       if (mapInstanceRef.current) {
-          mapInstanceRef.current.setView([p.lat, p.lng], 17, { animate: true });
+          mapInstanceRef.current.setView([lat, lng], 17, { animate: true });
       }
+  };
+
+  const panToPoint = (p: DisplayPoint) => {
+      panToCoords(p.lat, p.lng);
   };
 
   useEffect(() => {
@@ -394,41 +414,69 @@ export const MapInspector = ({
          </div>
 
          <div className="flex-1 overflow-y-auto custom-scrollbar">
-             {viewPoints.length === 0 ? (
+             {visibleData.length === 0 ? (
                  <div className="p-10 text-center text-slate-400 text-sm flex flex-col items-center">
                     <CalendarIcon className="w-8 h-8 mb-2 opacity-30"/>
                     {selectedDates.size === 0 ? "Select dates above." : "No matching activities found."}
                  </div>
              ) : (
-                 <div className="divide-y divide-slate-50">
-                     {viewPoints.map(p => {
-                         const isPlace = p.sequenceType === 'VISIT';
-                         const currentStyle = safeGetStyle(p.subType);
-                         return (
-                             <div
-                                key={p.id}
-                                onClick={() => { 
-                                    panToPoint(p); 
-                                    if (window.innerWidth < 1024) setSidebarOpen(false); 
-                                }}
-                                className={`w-full text-left px-4 py-3 hover:bg-blue-50/70 flex items-start gap-3 transition-colors cursor-pointer group border-l-4 ${isPlace ? 'border-red-400 bg-red-50/30' : 'border-slate-200'}`}
-                             >
-                                 <div 
-                                   className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5 shadow-sm text-white`}
-                                   style={{ backgroundColor: isPlace ? '#EF4444' : currentStyle.color }}
+                 <div className="divide-y divide-slate-100">
+                     {visibleData.map((item, seqIdx) => {
+                         const isPlace = item.type === 'PLACE';
+                         const style = isPlace ? { color: '#EF4444', label: 'Visit' } : safeGetStyle(item.subType);
+                         const isExpanded = expandedSegmentIds.has(item.id);
+                         const pointCount = item.path ? item.path.length : 0;
+
+                         if (isPlace) {
+                             return (
+                                 <div
+                                    key={item.id}
+                                    onClick={() => {
+                                        if (item.lat && item.lng) panToCoords(item.lat, item.lng);
+                                        if (window.innerWidth < 1024) setSidebarOpen(false);
+                                    }}
+                                    className="w-full text-left px-4 py-3 hover:bg-red-50/50 flex items-start gap-3 transition-colors cursor-pointer border-l-4 border-red-500 bg-red-50/20"
                                  >
-                                     {p.sequenceId}
-                                 </div>
-                                 <div className="min-w-0 flex-1">
-                                     <div className="flex items-center justify-between text-xs mb-1">
-                                         <span className="font-mono font-medium text-slate-600">{p.timestamp ? p.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'}</span>
-                                         {isPlace ? (
+                                     <div className="w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5 shadow-sm">
+                                         {seqIdx + 1}
+                                     </div>
+                                     <div className="min-w-0 flex-1">
+                                         <div className="flex items-center justify-between text-xs mb-1">
+                                             <span className="font-mono font-semibold text-slate-600">
+                                                 {item.startTime ? item.startTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'}
+                                             </span>
                                              <span className="bg-red-100 text-red-600 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight">Visit</span>
-                                         ) : (
+                                         </div>
+                                         <div className="text-xs text-slate-800 font-bold truncate">{item.name || 'Unknown Place'}</div>
+                                     </div>
+                                 </div>
+                             );
+                         }
+
+                         return (
+                             <div key={item.id} className="border-l-4 border-slate-200 hover:border-blue-400 bg-white transition-colors">
+                                 <div
+                                    onClick={() => {
+                                        if (item.startLoc) panToCoords(item.startLoc.lat, item.startLoc.lng);
+                                        if (window.innerWidth < 1024) setSidebarOpen(false);
+                                    }}
+                                    className="px-4 py-3 flex items-start gap-3 cursor-pointer hover:bg-blue-50/50 transition-colors"
+                                 >
+                                     <div 
+                                       className="w-6 h-6 rounded-full text-white flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5 shadow-sm"
+                                       style={{ backgroundColor: style.color }}
+                                     >
+                                         {seqIdx + 1}
+                                     </div>
+                                     <div className="min-w-0 flex-1">
+                                         <div className="flex items-center justify-between text-xs mb-1">
+                                             <span className="font-mono font-semibold text-slate-600">
+                                                 {item.startTime ? item.startTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'}
+                                             </span>
                                              <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
                                                  <select
-                                                     value={p.subType || 'UNKNOWN'}
-                                                     onChange={(e) => p.parentId && onUpdateItemType && onUpdateItemType(p.parentId, e.target.value)}
+                                                     value={item.subType || 'UNKNOWN'}
+                                                     onChange={(e) => onUpdateItemType && onUpdateItemType(item.id, e.target.value)}
                                                      className="appearance-none bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-800 text-[10px] font-bold py-0.5 pl-2 pr-5 rounded cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500"
                                                  >
                                                      {Object.entries(ACTIVITY_STYLES).map(([typeKey, styleObj]) => (
@@ -439,10 +487,52 @@ export const MapInspector = ({
                                                  </select>
                                                  <ChevronDown className="w-3 h-3 text-slate-500 absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none" />
                                              </div>
+                                         </div>
+                                         <div className="flex items-center justify-between text-xs">
+                                             <span className="text-slate-700 font-semibold truncate">
+                                                 {style.label} ({formatDuration(item.duration)})
+                                             </span>
+                                             {item.distance ? (
+                                                 <span className="text-[10px] text-slate-400 font-mono font-medium ml-2 shrink-0">
+                                                     {formatDistance(item.distance)}
+                                                 </span>
+                                             ) : null}
+                                         </div>
+                                         {pointCount > 0 && (
+                                             <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    toggleExpandSegment(item.id);
+                                                }}
+                                                className="mt-2 text-[10px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 bg-blue-50 px-2 py-0.5 rounded-full transition-colors"
+                                             >
+                                                {isExpanded ? '▼ Hide Raw Points' : `▶ Expand ${pointCount} Raw Points`}
+                                             </button>
                                          )}
                                      </div>
-                                     <div className="text-xs text-slate-700 font-medium truncate">{p.parentActivity}</div>
                                  </div>
+
+                                 {/* Expanded Sub-List of Raw Points */}
+                                 {isExpanded && item.path && (
+                                     <div className="bg-slate-50 border-t border-slate-100 px-4 py-2 space-y-1 text-xs">
+                                         {item.path.map((pt, pIdx) => (
+                                             <div
+                                                key={pIdx}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    panToCoords(pt.lat, pt.lng);
+                                                    if (window.innerWidth < 1024) setSidebarOpen(false);
+                                                }}
+                                                className="flex items-center justify-between py-1 px-2 rounded hover:bg-blue-100/70 text-slate-700 cursor-pointer font-mono text-[11px] transition-colors"
+                                             >
+                                                <span className="font-semibold text-blue-700">Pt {pIdx + 1}</span>
+                                                <span className="text-slate-500 text-[10px]">
+                                                    {pt.timestamp ? pt.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'}) : `${pt.lat.toFixed(4)}, ${pt.lng.toFixed(4)}`}
+                                                </span>
+                                             </div>
+                                         ))}
+                                     </div>
+                                 )}
                              </div>
                          );
                       })}
