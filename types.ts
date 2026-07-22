@@ -43,13 +43,15 @@ export interface SavedPlace {
   id: string;
   title: string;
   address?: string;
-  lat: number;
-  lng: number;
+  lat?: number | null;
+  lng?: number | null;
   url?: string;
   listName?: string;
-  category?: 'SAVED' | 'LABELED' | 'REVIEWED';
+  category?: 'SAVED' | 'LABELED' | 'REVIEWED' | 'WANT_TO_GO' | 'FAVORITES';
   icon?: string;
+  isGeocoding?: boolean;
 }
+
 
 
 

@@ -32,6 +32,7 @@ interface MapInspectorProps {
   lastInteractionDate: string | null;
   onUpdateItemType?: (itemId: string, newType: string) => void;
   savedPlaces?: SavedPlace[];
+  onUpdatePlaceCoords?: (placeId: string, lat: number, lng: number) => void;
 }
 
 export const MapInspector = ({ 
@@ -44,7 +45,8 @@ export const MapInspector = ({
   setRangeModeActive,
   lastInteractionDate,
   onUpdateItemType,
-  savedPlaces = []
+  savedPlaces = [],
+  onUpdatePlaceCoords
 }: MapInspectorProps) => {
   const [viewPoints, setViewPoints] = useState<DisplayPoint[]>([]);
   const [autoFit, setAutoFit] = useState(true);
@@ -53,6 +55,30 @@ export const MapInspector = ({
   const [isUIVisible, setIsUIVisible] = useState(true);
   const [expandedSegmentIds, setExpandedSegmentIds] = useState<Set<string>>(new Set());
   const [showSavedPlacesPanel, setShowSavedPlacesPanel] = useState(false);
+
+  const handleGeocodePlace = async (sp: SavedPlace) => {
+      if (sp.lat && sp.lng) {
+          panToCoords(sp.lat, sp.lng);
+          return;
+      }
+      try {
+          const query = encodeURIComponent(sp.title);
+          const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1`);
+          const resData = await res.json();
+          if (resData && resData.length > 0) {
+              const lat = parseFloat(resData[0].lat);
+              const lng = parseFloat(resData[0].lon);
+              if (onUpdatePlaceCoords) onUpdatePlaceCoords(sp.id, lat, lng);
+              panToCoords(lat, lng);
+          } else {
+              if (sp.url) window.open(sp.url, '_blank');
+              else alert(`Could not locate "${sp.title}" automatically.`);
+          }
+      } catch (err: any) {
+          if (sp.url) window.open(sp.url, '_blank');
+      }
+  };
+
 
 
   const toggleExpandSegment = (segmentId: string) => {
@@ -283,15 +309,18 @@ export const MapInspector = ({
       // Render Saved & Labeled Takeout Places
       if (savedPlaces && savedPlaces.length > 0) {
           savedPlaces.forEach(sp => {
-              const iconEmoji = sp.icon || (sp.category === 'LABELED' ? '📍' : (sp.category === 'REVIEWED' ? '💬' : '⭐'));
-              const bg = sp.category === 'LABELED' ? '#10B981' : (sp.category === 'REVIEWED' ? '#8B5CF6' : '#F59E0B');
-              const starIconHtml = `<div style="background-color: ${bg}; color: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35);">${iconEmoji}</div>`;
-              const starIcon = L.divIcon({ className: 'bg-transparent border-none', html: starIconHtml, iconSize: [26, 26], iconAnchor: [13, 13] });
+              if (sp.lat !== null && sp.lng !== null && typeof sp.lat === 'number' && typeof sp.lng === 'number' && !isNaN(sp.lat) && !isNaN(sp.lng)) {
+                  const iconEmoji = sp.icon || (sp.category === 'WANT_TO_GO' ? '📌' : (sp.category === 'FAVORITES' ? '❤️' : (sp.category === 'LABELED' ? '📍' : (sp.category === 'REVIEWED' ? '💬' : '⭐'))));
+                  const bg = sp.category === 'WANT_TO_GO' ? '#2563EB' : (sp.category === 'FAVORITES' ? '#DC2626' : (sp.category === 'LABELED' ? '#10B981' : (sp.category === 'REVIEWED' ? '#8B5CF6' : '#F59E0B')));
+                  const starIconHtml = `<div style="background-color: ${bg}; color: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35);">${iconEmoji}</div>`;
+                  const starIcon = L.divIcon({ className: 'bg-transparent border-none', html: starIconHtml, iconSize: [26, 26], iconAnchor: [13, 13] });
 
-              const marker = L.marker([sp.lat, sp.lng], { icon: starIcon, zIndexOffset: 2000 }).addTo(map);
-              marker.bindPopup(`<b>${iconEmoji} ${sp.title}</b>${sp.address ? `<br/><span style="font-size:11px;color:#666;">${sp.address}</span>` : ''}`);
+                  const marker = L.marker([sp.lat, sp.lng], { icon: starIcon, zIndexOffset: 2000 }).addTo(map);
+                  marker.bindPopup(`<b>${iconEmoji} ${sp.title}</b>${sp.listName ? `<br/><span style="font-size:10px;font-weight:bold;color:#4F46E5;">List: ${sp.listName}</span>` : ''}${sp.address ? `<br/><span style="font-size:11px;color:#666;">${sp.address}</span>` : ''}`);
+              }
           });
       }
+
 
 
       if (selectedDates.size === 0) return;
@@ -450,39 +479,72 @@ export const MapInspector = ({
          </div>
 
           {savedPlaces && savedPlaces.length > 0 && (
-              <div className="border-b border-amber-200 bg-amber-50/50 p-3">
+              <div className="border-b border-indigo-200 bg-indigo-50/50 p-3">
                   <button
                       onClick={() => setShowSavedPlacesPanel(!showSavedPlacesPanel)}
-                      className="w-full flex items-center justify-between text-xs font-bold text-amber-900 hover:text-amber-700 transition-colors"
+                      className="w-full flex items-center justify-between text-xs font-bold text-indigo-950 hover:text-indigo-700 transition-colors"
                   >
                       <span className="flex items-center gap-1.5">
-                          <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
-                          Takeout Saved & Labeled Places ({savedPlaces.length})
+                          <Star className="w-4 h-4 text-indigo-600 fill-indigo-600" />
+                          Takeout Saved Lists & Places ({savedPlaces.length})
                       </span>
-                      <span className="text-[10px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full font-mono">
+                      <span className="text-[10px] bg-indigo-200 text-indigo-900 px-2 py-0.5 rounded-full font-mono">
                           {showSavedPlacesPanel ? '▲ Hide List' : '▼ Inspect All'}
                       </span>
                   </button>
 
                   {showSavedPlacesPanel && (
-                      <div className="mt-3 space-y-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
-                          {savedPlaces.map(sp => (
-                              <div
-                                  key={sp.id}
-                                  onClick={() => panToCoords(sp.lat, sp.lng)}
-                                  className="p-2 bg-white border border-amber-200 rounded-lg hover:border-amber-400 cursor-pointer shadow-sm transition-all text-xs flex items-start gap-2"
-                              >
-                                  <span className="text-base leading-none">{sp.icon || (sp.category === 'LABELED' ? '📍' : '⭐')}</span>
-                                  <div className="min-w-0 flex-1">
-                                      <div className="font-bold text-slate-800 truncate">{sp.title}</div>
-                                      {sp.address && <div className="text-[10px] text-slate-500 truncate">{sp.address}</div>}
+                      <div className="mt-3 space-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+                          {savedPlaces.map(sp => {
+                              const hasCoords = sp.lat !== null && sp.lng !== null && typeof sp.lat === 'number' && !isNaN(sp.lat);
+                              return (
+                                  <div
+                                      key={sp.id}
+                                      onClick={() => handleGeocodePlace(sp)}
+                                      className="p-2.5 bg-white border border-indigo-100 rounded-lg hover:border-indigo-400 cursor-pointer shadow-sm transition-all text-xs flex items-start gap-2.5 group"
+                                  >
+                                      <span className="text-base leading-none shrink-0 mt-0.5">{sp.icon || (sp.category === 'WANT_TO_GO' ? '📌' : '⭐')}</span>
+                                      <div className="min-w-0 flex-1">
+                                          <div className="font-bold text-slate-800 truncate flex items-center justify-between gap-1">
+                                              <span className="truncate">{sp.title}</span>
+                                              {sp.listName && (
+                                                  <span className="text-[9px] bg-indigo-100 text-indigo-700 px-1.5 py-0.2 rounded shrink-0 font-semibold">
+                                                      {sp.listName}
+                                                  </span>
+                                              )}
+                                          </div>
+                                          {sp.address && <div className="text-[10px] text-slate-500 truncate">{sp.address}</div>}
+                                          <div className="mt-1 flex items-center gap-2">
+                                              {hasCoords ? (
+                                                  <span className="text-[9px] text-emerald-600 font-bold flex items-center gap-0.5">
+                                                      ✓ Pinned on map
+                                                  </span>
+                                              ) : (
+                                                  <span className="text-[9px] text-indigo-600 font-bold group-hover:underline flex items-center gap-0.5">
+                                                      🔍 Click to Locate & Pin on map
+                                                  </span>
+                                              )}
+                                              {sp.url && (
+                                                  <a
+                                                      href={sp.url}
+                                                      target="_blank"
+                                                      rel="noreferrer"
+                                                      onClick={(e) => e.stopPropagation()}
+                                                      className="text-[9px] text-slate-400 hover:text-indigo-600 underline ml-auto"
+                                                  >
+                                                      Maps Link ↗
+                                                  </a>
+                                              )}
+                                          </div>
+                                      </div>
                                   </div>
-                              </div>
-                          ))}
+                              );
+                          })}
                       </div>
                   )}
               </div>
           )}
+
 
           <div className="flex-1 overflow-y-auto custom-scrollbar">
              {visibleData.length === 0 ? (

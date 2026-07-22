@@ -121,6 +121,73 @@ const App = () => {
     return places;
   };
 
+  const [autoImportExtraTakeout, setAutoImportExtraTakeout] = useState(true);
+
+
+  const handleUpdatePlaceCoords = (placeId: string, lat: number, lng: number) => {
+    setSavedPlaces(prev => prev.map(p => p.id === placeId ? { ...p, lat, lng } : p));
+  };
+
+  const loadExtraTakeoutFiles = async (): Promise<import('./types').SavedPlace[]> => {
+    const allPlaces: import('./types').SavedPlace[] = [];
+
+    // 1. Saved Places (JSON)
+    try {
+      const resSaved = await fetch('/Takeout/Maps (your places)/Saved Places.json');
+      if (resSaved.ok) {
+        const jsonSaved = await resSaved.json();
+        allPlaces.push(...parsePlacesFeatureCollection(jsonSaved, 'SAVED', '⭐'));
+      }
+    } catch (e) {}
+
+    // 2. Want to Go (CSV)
+    try {
+      const resWantToGo = await fetch('/Takeout/Maps (your places)/Want to go.csv');
+      if (resWantToGo.ok) {
+        const csvText = await resWantToGo.text();
+        allPlaces.push(...parseCSVPlaces(csvText, 'Want to go'));
+      }
+    } catch (e) {}
+
+    // 3. Favorite Places (CSV)
+    try {
+      const resFav = await fetch('/Takeout/Maps (your places)/Favorite places.csv');
+      if (resFav.ok) {
+        const csvText = await resFav.text();
+        allPlaces.push(...parseCSVPlaces(csvText, 'Favorites'));
+      }
+    } catch (e) {}
+
+    // 4. Default List (CSV)
+    try {
+      const resDefaultList = await fetch('/Takeout/Maps (your places)/Default list.csv');
+      if (resDefaultList.ok) {
+        const csvText = await resDefaultList.text();
+        allPlaces.push(...parseCSVPlaces(csvText, 'Saved List'));
+      }
+    } catch (e) {}
+
+    // 5. Labeled Places (Home, Work)
+    try {
+      const resLabeled = await fetch('/Takeout/Maps/My labeled places/Labeled places.json');
+      if (resLabeled.ok) {
+        const jsonLabeled = await resLabeled.json();
+        allPlaces.push(...parsePlacesFeatureCollection(jsonLabeled, 'LABELED', '📍'));
+      }
+    } catch (e) {}
+
+    // 6. Reviews
+    try {
+      const resReviews = await fetch('/Takeout/Maps (your places)/Reviews.json');
+      if (resReviews.ok) {
+        const jsonReviews = await resReviews.json();
+        allPlaces.push(...parsePlacesFeatureCollection(jsonReviews, 'REVIEWED', '💬'));
+      }
+    } catch (e) {}
+
+    return allPlaces;
+  };
+
   const handleLoadLocalTakeout = async () => {
     setLoading(true);
     try {
@@ -137,64 +204,12 @@ const App = () => {
         setLastInteractionDate(activeDate);
       }
 
-      const allPlaces: import('./types').SavedPlace[] = [];
-
-      // 1. Saved Places (JSON)
-      try {
-        const resSaved = await fetch('/Takeout/Maps (your places)/Saved Places.json');
-        if (resSaved.ok) {
-          const jsonSaved = await resSaved.json();
-          allPlaces.push(...parsePlacesFeatureCollection(jsonSaved, 'SAVED', '⭐'));
-        }
-      } catch (e) {}
-
-      // 2. Want to Go (CSV)
-      try {
-        const resWantToGo = await fetch('/Takeout/Maps (your places)/Want to go.csv');
-        if (resWantToGo.ok) {
-          const csvText = await resWantToGo.text();
-          allPlaces.push(...parseCSVPlaces(csvText, 'Want to go'));
-        }
-      } catch (e) {}
-
-      // 3. Favorite Places (CSV)
-      try {
-        const resFav = await fetch('/Takeout/Maps (your places)/Favorite places.csv');
-        if (resFav.ok) {
-          const csvText = await resFav.text();
-          allPlaces.push(...parseCSVPlaces(csvText, 'Favorites'));
-        }
-      } catch (e) {}
-
-      // 4. Default List (CSV)
-      try {
-        const resDefaultList = await fetch('/Takeout/Maps (your places)/Default list.csv');
-        if (resDefaultList.ok) {
-          const csvText = await resDefaultList.text();
-          allPlaces.push(...parseCSVPlaces(csvText, 'Saved List'));
-        }
-      } catch (e) {}
-
-      // 5. Labeled Places (Home, Work)
-      try {
-        const resLabeled = await fetch('/Takeout/Maps/My labeled places/Labeled places.json');
-        if (resLabeled.ok) {
-          const jsonLabeled = await resLabeled.json();
-          allPlaces.push(...parsePlacesFeatureCollection(jsonLabeled, 'LABELED', '📍'));
-        }
-      } catch (e) {}
-
-      // 6. Reviews
-      try {
-        const resReviews = await fetch('/Takeout/Maps (your places)/Reviews.json');
-        if (resReviews.ok) {
-          const jsonReviews = await resReviews.json();
-          allPlaces.push(...parsePlacesFeatureCollection(jsonReviews, 'REVIEWED', '💬'));
-        }
-      } catch (e) {}
-
-      setSavedPlaces(allPlaces);
-
+      if (autoImportExtraTakeout) {
+        const extraPlaces = await loadExtraTakeoutFiles();
+        setSavedPlaces(extraPlaces);
+      } else {
+        setSavedPlaces([]);
+      }
 
       setActiveTab('inspector');
       setLoading(false);
@@ -216,12 +231,23 @@ const App = () => {
     const addressIdx = headers.findIndex(h => h.includes('address') || h.includes('location') || h.includes('note'));
 
     const places: import('./types').SavedPlace[] = [];
+    let category: 'SAVED' | 'WANT_TO_GO' | 'FAVORITES' = 'SAVED';
+    let icon = '⭐';
+    if (listName.toLowerCase().includes('want to go')) {
+      category = 'WANT_TO_GO';
+      icon = '📌';
+    } else if (listName.toLowerCase().includes('favorite')) {
+      category = 'FAVORITES';
+      icon = '❤️';
+    }
 
     for (let i = 1; i < lines.length; i++) {
         const row = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || lines[i].split(',');
         const cleanRow = row.map(cell => cell.replace(/^["']|["']$/g, '').trim());
 
-        const title = (titleIdx !== -1 && cleanRow[titleIdx]) ? cleanRow[titleIdx] : `Saved Place #${i}`;
+        const title = (titleIdx !== -1 && cleanRow[titleIdx]) ? cleanRow[titleIdx] : cleanRow[0];
+        if (!title || title.toLowerCase() === 'title') continue;
+
         let lat: number | null = null;
         let lng: number | null = null;
 
@@ -241,19 +267,17 @@ const App = () => {
             }
         }
 
-        if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng)) {
-            places.push({
-                id: `sp-csv-${listName}-${i}`,
-                title,
-                address: addressIdx !== -1 ? cleanRow[addressIdx] : undefined,
-                lat,
-                lng,
-                url: urlIdx !== -1 ? cleanRow[urlIdx] : undefined,
-                category: 'SAVED',
-                icon: '⭐',
-                listName
-            });
-        }
+        places.push({
+            id: `sp-csv-${listName}-${i}`,
+            title,
+            address: addressIdx !== -1 ? cleanRow[addressIdx] : undefined,
+            lat: (!isNaN(Number(lat)) && lat !== null) ? lat : null,
+            lng: (!isNaN(Number(lng)) && lng !== null) ? lng : null,
+            url: urlIdx !== -1 ? cleanRow[urlIdx] : undefined,
+            category,
+            icon,
+            listName
+        });
     }
 
     return places;
@@ -292,14 +316,12 @@ const App = () => {
     });
   };
 
-
-
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     setLoading(true);
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
         try {
             const text = e.target?.result as string;
             const json = JSON.parse(text);
@@ -313,6 +335,14 @@ const App = () => {
                 setSelectedDates(new Set([activeDate]));
                 setLastInteractionDate(activeDate);
             }
+
+            if (autoImportExtraTakeout) {
+              const extraPlaces = await loadExtraTakeoutFiles();
+              setSavedPlaces(extraPlaces);
+            } else {
+              setSavedPlaces([]);
+            }
+
             setActiveTab('inspector');
             setLoading(false);
         } catch (err: any) {
@@ -322,6 +352,8 @@ const App = () => {
     };
     reader.readAsText(file);
   };
+
+
 
 
   const handleDateToggle = (d: string, isShift: boolean) => {
@@ -390,12 +422,31 @@ const App = () => {
             Upload your Google Location History JSON file to analyze your trips.
           </p>
           
+          <div className="mb-4 p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl text-left">
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoImportExtraTakeout}
+                onChange={(e) => setAutoImportExtraTakeout(e.target.checked)}
+                className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+              />
+              <div>
+                <span className="text-xs font-bold text-indigo-950 block">
+                  Auto-import Takeout place lists (Want to Go, Favorites, Saved, Reviews)
+                </span>
+                <span className="text-[10px] text-indigo-600 block">
+                  {autoImportExtraTakeout ? 'Enabled (Imports all saved lists from Takeout folder)' : 'Disabled (Loads location-history.json only)'}
+                </span>
+              </div>
+            </label>
+          </div>
+
           <div className="space-y-4">
             <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 bg-slate-50 hover:bg-blue-50/50 hover:border-blue-300 transition-all relative cursor-pointer group">
               <input type="file" accept=".json" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
               <div className="transform group-hover:scale-105 transition-transform duration-200">
                 <Upload className="w-10 h-10 text-slate-400 mx-auto mb-3 group-hover:text-blue-500" />
-                <p className="font-semibold text-slate-700 text-sm">Click to Upload JSON File</p>
+                <p className="font-semibold text-slate-700 text-sm">Click to Select location-history.json</p>
               </div>
             </div>
 
@@ -409,7 +460,7 @@ const App = () => {
                onClick={handleLoadLocalTakeout}
                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-sm"
             >
-               ✨ Auto-Load Uploaded Takeout Data (14,256 items + Saved Places)
+               ✨ Auto-Load Uploaded Takeout Data Folder
             </button>
           </div>
 
@@ -472,6 +523,7 @@ const App = () => {
                lastInteractionDate={lastInteractionDate}
                onUpdateItemType={handleUpdateItemType}
                savedPlaces={savedPlaces}
+               onUpdatePlaceCoords={handleUpdatePlaceCoords}
              />
           )}
         </ErrorBoundary>
@@ -481,5 +533,4 @@ const App = () => {
   );
 };
 
-
-export default App;
+export default App;
