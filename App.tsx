@@ -156,6 +156,11 @@ const App = () => {
   const handleQuickJump = (d: string, isShift: boolean) => {
       if (!d || d === 'none') return;
 
+      if (d === 'ALL') {
+          setSelectedDates(new Set(availableDates));
+          return;
+      }
+
       if (isShift && lastInteractionDate && availableDates.includes(lastInteractionDate)) {
           const idx1 = availableDates.indexOf(lastInteractionDate);
           const idx2 = availableDates.indexOf(d);
@@ -172,6 +177,7 @@ const App = () => {
       }
       setLastInteractionDate(d);
   };
+
 
   if (!data) return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 font-sans">

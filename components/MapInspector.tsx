@@ -348,7 +348,8 @@ export const MapInspector = ({
       if (autoFit && visibleData.length > 0) fitMapBounds(map, visibleData);
       map.invalidateSize();
 
-  }, [selectedDates, visibleData, viewPoints, autoFit, focusedType, savedPlaces]);
+  }, [isLeafletLoaded, selectedDates, visibleData, viewPoints, autoFit, focusedType, savedPlaces]);
+
 
 
 
@@ -407,7 +408,9 @@ export const MapInspector = ({
                         value={selectedDates.size === 1 ? Array.from(selectedDates)[0] : 'none'}
                     >
                         <option value="none" disabled>Select a date...</option>
+                        <option value="ALL">✨ Select All Available Dates ({availableDates.length} days)</option>
                         {availableDates.map(d => <option key={d} value={d}>{d}</option>)}
+
                     </select>
                     <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500">
                         <ChevronDown className="w-4 h-4" />
