@@ -7,7 +7,7 @@ import { MapInspector } from './components/MapInspector';
 import { formatDistance } from './utils';
 
 const App = () => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'inspector'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'inspector'>('inspector');
   const [data, setData] = useState<ParsedItem[] | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -29,6 +29,50 @@ const App = () => {
         return item;
       });
     });
+  };
+
+  const handleLoadLocalTakeout = async () => {
+    setLoading(true);
+    try {
+      const resHistory = await fetch('/Takeout/location-history.json');
+      if (!resHistory.ok) throw new Error("File Takeout/location-history.json not found on server");
+      const jsonHistory = await resHistory.json();
+      const parsed = detectAndNormalize(jsonHistory);
+      setData(parsed.items);
+      setAvailableDates(parsed.availableDates);
+      setSelectedDates(new Set(parsed.availableDates));
+
+      try {
+        const resSaved = await fetch('/Takeout/Maps (your places)/Saved Places.json');
+        if (resSaved.ok) {
+          const jsonSaved = await resSaved.json();
+          const places: import('./types').SavedPlace[] = [];
+          if (jsonSaved.type === 'FeatureCollection' && Array.isArray(jsonSaved.features)) {
+            jsonSaved.features.forEach((f: any, idx: number) => {
+              const coords = f.geometry?.coordinates;
+              if (coords && coords.length >= 2) {
+                places.push({
+                  id: `sp-${idx}`,
+                  title: f.properties?.location?.name || f.properties?.name || f.properties?.title || 'Saved Place',
+                  address: f.properties?.location?.address || f.properties?.address,
+                  lat: coords[1],
+                  lng: coords[0],
+                  url: f.properties?.google_maps_url || f.properties?.url
+                });
+              }
+            });
+          }
+          setSavedPlaces(places);
+        }
+      } catch (e) {
+        // Saved places optional
+      }
+      setActiveTab('inspector');
+      setLoading(false);
+    } catch (err: any) {
+      alert("Could not auto-load Takeout file: " + err.message);
+      setLoading(false);
+    }
   };
 
   const handleSavedPlacesUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -109,11 +153,12 @@ const App = () => {
             setData(res.items);
             setAvailableDates(res.availableDates);
 
+            // Select ALL dates by default so data immediately displays on map
             if (res.availableDates.length > 0) {
-                const last = res.availableDates[res.availableDates.length - 1];
-                setSelectedDates(new Set([last]));
-                setLastInteractionDate(last);
+                setSelectedDates(new Set(res.availableDates));
+                setLastInteractionDate(res.availableDates[res.availableDates.length - 1]);
             }
+            setActiveTab('inspector');
             setLoading(false);
         } catch (err: any) {
             alert("Error: " + err.message);
@@ -178,7 +223,6 @@ const App = () => {
       setLastInteractionDate(d);
   };
 
-
   if (!data) return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 font-sans">
         <div className="bg-white p-10 rounded-2xl shadow-xl max-w-lg w-full text-center border border-slate-100">
@@ -189,17 +233,35 @@ const App = () => {
           <p className="text-slate-500 mb-8 text-base leading-relaxed">
             Upload your Google Location History JSON file to analyze your trips.
           </p>
-          <div className="border-2 border-dashed border-slate-200 rounded-xl p-10 bg-slate-50 hover:bg-blue-50/50 hover:border-blue-300 transition-all relative cursor-pointer group">
-            <input type="file" accept=".json" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-            <div className="transform group-hover:scale-105 transition-transform duration-200">
-              <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4 group-hover:text-blue-500" />
-              <p className="font-semibold text-slate-700">Click to Upload JSON</p>
+          
+          <div className="space-y-4">
+            <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 bg-slate-50 hover:bg-blue-50/50 hover:border-blue-300 transition-all relative cursor-pointer group">
+              <input type="file" accept=".json" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+              <div className="transform group-hover:scale-105 transition-transform duration-200">
+                <Upload className="w-10 h-10 text-slate-400 mx-auto mb-3 group-hover:text-blue-500" />
+                <p className="font-semibold text-slate-700 text-sm">Click to Upload JSON File</p>
+              </div>
             </div>
+
+            <div className="relative flex py-2 items-center">
+                <div className="flex-grow border-t border-slate-200"></div>
+                <span className="flex-shrink mx-4 text-xs font-bold text-slate-400 uppercase">Or</span>
+                <div className="flex-grow border-t border-slate-200"></div>
+            </div>
+
+            <button
+               onClick={handleLoadLocalTakeout}
+               className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-sm"
+            >
+               ✨ Auto-Load Uploaded Takeout Data (14,256 items + Saved Places)
+            </button>
           </div>
-          {loading && <div className="mt-6 text-blue-600 flex justify-center items-center"><Clock className="animate-spin w-4 h-4 mr-2"/> Parsing...</div>}
+
+          {loading && <div className="mt-6 text-blue-600 flex justify-center items-center font-semibold text-sm"><Clock className="animate-spin w-4 h-4 mr-2"/> Processing dataset...</div>}
         </div>
       </div>
   );
+
 
   return (
     <div className="h-screen flex flex-col font-sans text-slate-900 overflow-hidden">
