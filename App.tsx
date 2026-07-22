@@ -139,7 +139,7 @@ const App = () => {
 
       const allPlaces: import('./types').SavedPlace[] = [];
 
-      // 1. Saved Places
+      // 1. Saved Places (JSON)
       try {
         const resSaved = await fetch('/Takeout/Maps (your places)/Saved Places.json');
         if (resSaved.ok) {
@@ -148,7 +148,34 @@ const App = () => {
         }
       } catch (e) {}
 
-      // 2. Labeled Places (Home, Work)
+      // 2. Want to Go (CSV)
+      try {
+        const resWantToGo = await fetch('/Takeout/Maps (your places)/Want to go.csv');
+        if (resWantToGo.ok) {
+          const csvText = await resWantToGo.text();
+          allPlaces.push(...parseCSVPlaces(csvText, 'Want to go'));
+        }
+      } catch (e) {}
+
+      // 3. Favorite Places (CSV)
+      try {
+        const resFav = await fetch('/Takeout/Maps (your places)/Favorite places.csv');
+        if (resFav.ok) {
+          const csvText = await resFav.text();
+          allPlaces.push(...parseCSVPlaces(csvText, 'Favorites'));
+        }
+      } catch (e) {}
+
+      // 4. Default List (CSV)
+      try {
+        const resDefaultList = await fetch('/Takeout/Maps (your places)/Default list.csv');
+        if (resDefaultList.ok) {
+          const csvText = await resDefaultList.text();
+          allPlaces.push(...parseCSVPlaces(csvText, 'Saved List'));
+        }
+      } catch (e) {}
+
+      // 5. Labeled Places (Home, Work)
       try {
         const resLabeled = await fetch('/Takeout/Maps/My labeled places/Labeled places.json');
         if (resLabeled.ok) {
@@ -157,7 +184,7 @@ const App = () => {
         }
       } catch (e) {}
 
-      // 3. Reviews
+      // 6. Reviews
       try {
         const resReviews = await fetch('/Takeout/Maps (your places)/Reviews.json');
         if (resReviews.ok) {
@@ -167,6 +194,7 @@ const App = () => {
       } catch (e) {}
 
       setSavedPlaces(allPlaces);
+
 
       setActiveTab('inspector');
       setLoading(false);
