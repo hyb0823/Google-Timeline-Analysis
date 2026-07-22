@@ -136,19 +136,22 @@ export const MapInspector = ({
               const showPoints = item.subType !== 'FLYING';
               
               if (showPoints && item.path.length > 0) {
-                  // Only push the start point of each activity to sidebar list for clean view, or first point
-                  points.push({
-                      id: `p-${item.id}-0`,
-                      parentId: item.id,
-                      sequenceId: pathCounter++,
-                      sequenceType: 'PATH',
-                      lat: item.path[0].lat,
-                      lng: item.path[0].lng,
-                      timestamp: item.path[0].timestamp || item.startTime,
-                      type: 'POINT',
-                      parentType: subType,
-                      subType: subType,
-                      parentActivity: `${safeGetStyle(subType).label} (${formatDuration(item.duration)})`
+                  item.path.forEach((p, idx) => {
+                      points.push({
+                          id: `p-${item.id}-${idx}`,
+                          parentId: item.id,
+                          sequenceId: pathCounter++,
+                          sequenceType: 'PATH',
+                          lat: p.lat,
+                          lng: p.lng,
+                          timestamp: p.timestamp || item.startTime,
+                          type: 'POINT',
+                          parentType: subType,
+                          subType: subType,
+                          parentActivity: item.path.length > 1
+                              ? `${safeGetStyle(subType).label} (Pt ${idx + 1}/${item.path.length})`
+                              : `${safeGetStyle(subType).label} (${formatDuration(item.duration)})`
+                      });
                   });
               } else if (item.path.length > 0) {
                   points.push({
@@ -192,7 +195,7 @@ export const MapInspector = ({
 
   const panToPoint = (p: DisplayPoint) => {
       if (mapInstanceRef.current) {
-          mapInstanceRef.current.setView([p.lat, p.lng], 14, { animate: true });
+          mapInstanceRef.current.setView([p.lat, p.lng], 17, { animate: true });
       }
   };
 
@@ -229,8 +232,8 @@ export const MapInspector = ({
 
       // Render Saved Places
       if (savedPlaces && savedPlaces.length > 0) {
-          const starIconHtml = `<div style="background-color: #F59E0B; color: white; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">⭐</div>`;
-          const starIcon = window.L.divIcon({ className: 'bg-transparent border-none', html: starIconHtml, iconSize: [22, 22], iconAnchor: [11, 11] });
+          const starIconHtml = `<div style="background-color: #F59E0B; color: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35);">⭐</div>`;
+          const starIcon = window.L.divIcon({ className: 'bg-transparent border-none', html: starIconHtml, iconSize: [26, 26], iconAnchor: [13, 13] });
 
           savedPlaces.forEach(sp => {
               const marker = window.L.marker([sp.lat, sp.lng], { icon: starIcon, zIndexOffset: 2000 }).addTo(map);
@@ -255,9 +258,9 @@ export const MapInspector = ({
                 color = CATEGORICAL_COLORS[index % CATEGORICAL_COLORS.length];
               }
 
-              // Refined thin line weights for clean static screenshots
-              const weight = isFocused ? 3.0 : (item.subType === 'FLYING' ? 1.5 : 2.0);
-              const opacity = isFocused ? 0.95 : 0.6;
+              // Bold, crisp line weights optimized for 4K / High-DPI displays
+              const weight = isFocused ? 7.0 : (item.subType === 'FLYING' ? 3.5 : 5.0);
+              const opacity = isFocused ? 0.95 : 0.75;
               
               if (item.subType === 'FLYING' && item.startLoc && item.endLoc) {
                   const curvedPath = getGeodesicPath(item.startLoc, item.endLoc);
@@ -266,18 +269,18 @@ export const MapInspector = ({
                       color: color, 
                       weight: weight, 
                       opacity: opacity,
-                      dashArray: '4, 6',
+                      dashArray: '6, 10',
                       lineCap: 'round'
                   };
 
                   window.L.polyline(curvedPath, lineOptions).addTo(map);
 
                   const dotOptions = {
-                    radius: isFocused ? 5 : 4,
+                    radius: isFocused ? 7 : 5,
                     fillColor: 'white',
                     fillOpacity: 1,
                     color: color,
-                    weight: isFocused ? 2 : 1.5,
+                    weight: isFocused ? 3 : 2,
                     interactive: false
                   };
 
@@ -305,8 +308,8 @@ export const MapInspector = ({
           const color = isVisit ? '#EF4444' : safeGetStyle(p.parentType).color;
           const zIndex = isVisit ? 1000 : 100;
           
-          const iconHtml = `<div style="background-color: ${color}; color: white; width: ${isVisit ? '20px' : '10px'}; height: ${isVisit ? '20px' : '10px'}; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: ${isVisit ? '9px' : '0px'}; font-weight: bold; border: 1.5px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.25);">${isVisit ? p.sequenceId : ''}</div>`;
-          const icon = window.L.divIcon({ className: 'bg-transparent border-none', html: iconHtml, iconSize: isVisit ? [20, 20] : [10, 10], iconAnchor: isVisit ? [10, 10] : [5, 5] });
+          const iconHtml = `<div style="background-color: ${color}; color: white; width: ${isVisit ? '22px' : '12px'}; height: ${isVisit ? '22px' : '12px'}; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: ${isVisit ? '10px' : '0px'}; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${isVisit ? p.sequenceId : ''}</div>`;
+          const icon = window.L.divIcon({ className: 'bg-transparent border-none', html: iconHtml, iconSize: isVisit ? [22, 22] : [12, 12], iconAnchor: isVisit ? [11, 11] : [6, 6] });
           window.L.marker([p.lat, p.lng], { icon, zIndexOffset: zIndex }).addTo(pointLayers);
       });
 
@@ -314,6 +317,7 @@ export const MapInspector = ({
       map.invalidateSize();
 
   }, [selectedDates, visibleData, viewPoints, autoFit, focusedType, savedPlaces]);
+
 
 
   return (
