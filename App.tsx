@@ -60,6 +60,19 @@ const App = () => {
     });
   };
 
+  const getLatestActiveDate = (items: ParsedItem[], dates: string[]): string => {
+    for (let i = dates.length - 1; i >= 0; i--) {
+        const dateStr = dates[i];
+        const dayItems = items.filter(it => it.dateStr === dateStr);
+        const hasValidActivityOrVisit = dayItems.some(it => 
+            (it.type === 'PLACE' && it.lat && it.lng) ||
+            (it.type === 'ACTIVITY' && (it.path && it.path.length > 1 || (it.startLoc && it.endLoc)))
+        );
+        if (hasValidActivityOrVisit) return dateStr;
+    }
+    return dates[dates.length - 1] || '';
+  };
+
   const handleLoadLocalTakeout = async () => {
     setLoading(true);
     try {
@@ -69,7 +82,12 @@ const App = () => {
       const parsed = detectAndNormalize(jsonHistory);
       setData(parsed.items);
       setAvailableDates(parsed.availableDates);
-      setSelectedDates(new Set(parsed.availableDates));
+
+      if (parsed.availableDates.length > 0) {
+        const activeDate = getLatestActiveDate(parsed.items, parsed.availableDates);
+        setSelectedDates(new Set([activeDate]));
+        setLastInteractionDate(activeDate);
+      }
 
       try {
         const resSaved = await fetch('/Takeout/Maps (your places)/Saved Places.json');
@@ -182,10 +200,11 @@ const App = () => {
             setData(res.items);
             setAvailableDates(res.availableDates);
 
-            // Select ALL dates by default so data immediately displays on map
+            // Select the most recent date that has active GPS track/visit points
             if (res.availableDates.length > 0) {
-                setSelectedDates(new Set(res.availableDates));
-                setLastInteractionDate(res.availableDates[res.availableDates.length - 1]);
+                const activeDate = getLatestActiveDate(res.items, res.availableDates);
+                setSelectedDates(new Set([activeDate]));
+                setLastInteractionDate(activeDate);
             }
             setActiveTab('inspector');
             setLoading(false);
@@ -196,6 +215,7 @@ const App = () => {
     };
     reader.readAsText(file);
   };
+
 
   const handleDateToggle = (d: string, isShift: boolean) => {
       if (d === 'CLEAR') {
