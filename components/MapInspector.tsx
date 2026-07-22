@@ -77,11 +77,23 @@ export const MapInspector = ({
 
   // --- Leaflet Loader ---
   useEffect(() => {
-      if (window.L && window.L.map) { setIsLeafletLoaded(true); return; }
-      const script = document.createElement('script'); script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'; script.async = true;
-      script.onload = () => { setTimeout(() => { if (window.L && window.L.map) setIsLeafletLoaded(true); }, 500); };
-      document.head.appendChild(script);
+      const checkLeaflet = () => {
+          if (window.L && window.L.map) {
+              setIsLeafletLoaded(true);
+              return true;
+          }
+          return false;
+      };
+
+      if (checkLeaflet()) return;
+
+      const interval = setInterval(() => {
+          if (checkLeaflet()) clearInterval(interval);
+      }, 100);
+
+      return () => clearInterval(interval);
   }, []);
+
 
   const toggleType = (type: string) => {
       const next = new Set(visibleTypes);
