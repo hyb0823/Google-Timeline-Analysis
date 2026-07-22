@@ -176,23 +176,94 @@ const App = () => {
     }
   };
 
-  const handleSavedPlacesUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const text = e.target?.result as string;
-        const json = JSON.parse(text);
-        const places = parsePlacesFeatureCollection(json, 'SAVED', '⭐');
-        setSavedPlaces(prev => [...prev, ...places]);
-        alert(`Successfully imported ${places.length} saved places!`);
-      } catch (err: any) {
-        alert("Error importing saved places: " + err.message);
-      }
-    };
-    reader.readAsText(file);
+  const parseCSVPlaces = (csvText: string, listName: string = 'Imported List'): import('./types').SavedPlace[] => {
+    const lines = csvText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length < 2) return [];
+
+    const headers = lines[0].split(',').map(h => h.replace(/^["']|["']$/g, '').trim().toLowerCase());
+    const titleIdx = headers.findIndex(h => h.includes('title') || h.includes('name'));
+    const latIdx = headers.findIndex(h => h.includes('lat') || h.includes('latitude'));
+    const lngIdx = headers.findIndex(h => h.includes('lng') || h.includes('lon') || h.includes('longitude'));
+    const urlIdx = headers.findIndex(h => h.includes('url') || h.includes('link'));
+    const addressIdx = headers.findIndex(h => h.includes('address') || h.includes('location') || h.includes('note'));
+
+    const places: import('./types').SavedPlace[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+        const row = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || lines[i].split(',');
+        const cleanRow = row.map(cell => cell.replace(/^["']|["']$/g, '').trim());
+
+        const title = (titleIdx !== -1 && cleanRow[titleIdx]) ? cleanRow[titleIdx] : `Saved Place #${i}`;
+        let lat: number | null = null;
+        let lng: number | null = null;
+
+        if (latIdx !== -1 && lngIdx !== -1 && cleanRow[latIdx] && cleanRow[lngIdx]) {
+            lat = parseFloat(cleanRow[latIdx]);
+            lng = parseFloat(cleanRow[lngIdx]);
+        } else {
+            for (const cell of cleanRow) {
+                if (cell.startsWith('geo:')) {
+                    const parts = cell.replace('geo:', '').split(',');
+                    if (parts.length >= 2) {
+                        lat = parseFloat(parts[0]);
+                        lng = parseFloat(parts[1]);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng)) {
+            places.push({
+                id: `sp-csv-${listName}-${i}`,
+                title,
+                address: addressIdx !== -1 ? cleanRow[addressIdx] : undefined,
+                lat,
+                lng,
+                url: urlIdx !== -1 ? cleanRow[urlIdx] : undefined,
+                category: 'SAVED',
+                icon: '⭐',
+                listName
+            });
+        }
+    }
+
+    return places;
   };
+
+  const handleSavedPlacesUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    let importedCount = 0;
+    const fileList = Array.from(files);
+
+    fileList.forEach((file, fIdx) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const text = e.target?.result as string;
+          let places: import('./types').SavedPlace[] = [];
+          if (file.name.endsWith('.csv')) {
+            places = parseCSVPlaces(text, file.name.replace('.csv', ''));
+          } else {
+            const json = JSON.parse(text);
+            places = parsePlacesFeatureCollection(json, 'SAVED', '⭐');
+          }
+          setSavedPlaces(prev => [...prev, ...places]);
+          importedCount += places.length;
+
+          if (fIdx === fileList.length - 1) {
+            alert(`Successfully imported ${importedCount} saved place(s) from ${fileList.length} file(s)!`);
+          }
+        } catch (err: any) {
+          console.error("Error importing places from " + file.name, err);
+        }
+      };
+      reader.readAsText(file);
+    });
+  };
+
 
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -344,9 +415,10 @@ const App = () => {
             </div>
             <div className="flex items-center gap-4 text-sm">
                 <label className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium px-3 py-1.5 rounded cursor-pointer transition-colors">
-                  ⭐ Import Saved Places
-                  <input type="file" accept=".json,.geojson,.csv" onChange={handleSavedPlacesUpload} className="hidden" />
+                  ⭐ Import Saved Places / Lists
+                  <input type="file" accept=".json,.geojson,.csv" multiple onChange={handleSavedPlacesUpload} className="hidden" />
                 </label>
+
                 <button onClick={() => setData(null)} className="text-red-500 hover:bg-red-50 px-3 py-1.5 rounded">Close File</button>
             </div>
          </div>
